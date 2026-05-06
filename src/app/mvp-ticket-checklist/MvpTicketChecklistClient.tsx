@@ -672,10 +672,10 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         type="button"
                         onClick={async () => {
                           await copyToClipboard("kickoff-codex", data.codingAgentPrompt);
-                          window.location.href = "codex://";
+                          openCodex();
                         }}
                         className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
-                        title="Copies the full prompt + opens the Codex desktop app. Paste into a new chat."
+                        title="Copies the full prompt + opens Codex (desktop app on Mac/PC, web on mobile). Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-codex" && copyResult.status === "copied" ? (
                           <>
@@ -693,10 +693,10 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         type="button"
                         onClick={async () => {
                           await copyToClipboard("kickoff-claude", data.codingAgentPrompt);
-                          window.location.href = "claude://";
+                          openClaude();
                         }}
                         className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
-                        title="Copies the full prompt + opens the Claude desktop app. Paste into a new chat."
+                        title="Copies the full prompt + opens Claude (desktop app on Mac/PC, web on mobile). Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-claude" && copyResult.status === "copied" ? (
                           <>
@@ -1364,6 +1364,27 @@ function buildIssueHref(issueKey: string, accessParam: string): string {
   params.set("issue", issueKey);
   if (accessParam) params.set("access", accessParam);
   return `/mvp-ticket-checklist?${params.toString()}`;
+}
+
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
+function openCodex(): void {
+  if (isMobileDevice()) {
+    window.open("https://chatgpt.com/codex", "_blank", "noopener,noreferrer");
+  } else {
+    window.location.href = "codex://";
+  }
+}
+
+function openClaude(): void {
+  if (isMobileDevice()) {
+    window.open("https://claude.ai/new", "_blank", "noopener,noreferrer");
+  } else {
+    window.location.href = "claude://";
+  }
 }
 
 function TicketHeaderStrip({
