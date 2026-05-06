@@ -2,14 +2,17 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, useTransition, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowRight,
   Bot,
   Check,
+  ChevronDown,
   Clipboard,
+  Clock,
   Copy,
   ExternalLink,
   FileText,
@@ -24,6 +27,7 @@ import {
   Smartphone,
   Sparkles,
   TicketCheck,
+  Users,
 } from "lucide-react";
 import type { ChecklistViewModel, JiraChecklistResult } from "@/lib/mvp-ticket-checklist";
 import { capitalizeFirst, findManualBugStep, shortTestInstruction } from "@/lib/checklist-helpers";
@@ -600,7 +604,13 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   Pick a BDEV ticket. Buddy turns it into plain-English steps and keeps the scary Jira detail tucked away.
                 </p>
               </div>
-              <form className="grid w-full min-w-0 gap-3 rounded-lg border border-[var(--border)] bg-black/20 p-3 sm:max-w-[520px] sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="flex w-full flex-col gap-3 sm:max-w-[520px]">
+              <TicketQueuePicker
+                accessParam={accessParam}
+                currentIssueKey={data?.issueKey ?? issueKey}
+                ready={ready}
+              />
+              <form className="grid w-full min-w-0 gap-3 rounded-lg border border-[var(--border)] bg-black/20 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <label className="sr-only" htmlFor="issue">
                 BDEV issue key
               </label>
@@ -624,6 +634,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                 <ArrowRight size={17} />
               </button>
             </form>
+              </div>
             </div>
 
             {ready && data ? (
@@ -1308,6 +1319,267 @@ function BlipMascotGuide({
         </div>
       </div>
     </motion.div>
+  );
+}
+
+type QueueRow = {
+  issueKey: string;
+  summary: string;
+  status: string;
+  priority: string;
+  mvpTrack: string;
+  loopStage: string;
+  verificationSurface: string;
+  humanFinalReview: string;
+  verifiedBuildOrCommit: string;
+  updatedAt: string;
+  statusChangedAt: string;
+  blocksKeys: string[];
+  blockedByKeys: string[];
+  reasons: string[];
+  ageInStatusHours: number;
+  hasBuild: boolean;
+  hasHumanReady: boolean;
+  surfaceList: string[];
+  presence: { sessionId: string; ageMinutes: number } | null;
+};
+
+type QueueState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; rows: QueueRow[]; total: number; presenceEnabled: boolean }
+  | { status: "error"; message: string };
+
+const SESSION_ID_KEY = "buddy_session_id";
+
+function getOrCreateSessionId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    let id = window.localStorage.getItem(SESSION_ID_KEY);
+    if (!id) {
+      id = (typeof crypto !== "undefined" && "randomUUID" in crypto)
+        ? crypto.randomUUID()
+        : `s_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+      window.localStorage.setItem(SESSION_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
+
+function buildIssueHref(issueKey: string, accessParam: string): string {
+  const params = new URLSearchParams();
+  params.set("issue", issueKey);
+  if (accessParam) params.set("access", accessParam);
+  return `/mvp-ticket-checklist?${params.toString()}`;
+}
+
+function TicketQueuePicker({
+  accessParam,
+  currentIssueKey,
+  ready,
+}: {
+  accessParam: string;
+  currentIssueKey: string;
+  ready: boolean;
+}) {
+  const router = useRouter();
+  const [state, setState] = useState<QueueState>({ status: "idle" });
+  const [open, setOpen] = useState(false);
+  const [sessionId] = useState<string>(() =>
+    typeof window === "undefined" ? "" : getOrCreateSessionId(),
+  );
+  const [isNavigating, startNavigation] = useTransition();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    async function load() {
+      setState({ status: "loading" });
+      try {
+        const url = `/api/mvp-ticket-checklist/queue${accessParam ? `?access=${encodeURIComponent(accessParam)}` : ""}`;
+        const response = await fetch(url, { cache: "no-store" });
+        const body = await response.json();
+        if (cancelled) return;
+        if (body.status !== "ready") {
+          setState({ status: "error", message: body.message || "Queue could not load." });
+          return;
+        }
+        setState({
+          status: "ready",
+          rows: Array.isArray(body.rows) ? body.rows : [],
+          total: typeof body.total === "number" ? body.total : 0,
+          presenceEnabled: Boolean(body.presenceEnabled),
+        });
+      } catch (error) {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          message: error instanceof Error ? error.message : "Queue request failed.",
+        });
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessParam, ready, currentIssueKey]);
+
+  useEffect(() => {
+    if (!ready || !currentIssueKey) return;
+    const sid = sessionId || getOrCreateSessionId();
+    if (!sid) return;
+    fetch("/api/mvp-ticket-checklist/touch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ issue: currentIssueKey, sessionId: sid, access: accessParam || undefined }),
+    }).catch(() => {});
+  }, [accessParam, currentIssueKey, ready, sessionId]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(event: globalThis.MouseEvent) {
+      if (!containerRef.current) return;
+      if (containerRef.current.contains(event.target as Node)) return;
+      setOpen(false);
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  function navigateTo(issueKey: string) {
+    setOpen(false);
+    startNavigation(() => {
+      router.push(buildIssueHref(issueKey, accessParam));
+    });
+  }
+
+  function pickForMe() {
+    if (state.status !== "ready" || !state.rows.length) return;
+    const topKey = state.rows[0].issueKey;
+    if (topKey === currentIssueKey) {
+      setOpen(true);
+      return;
+    }
+    navigateTo(topKey);
+  }
+
+  const rows = state.status === "ready" ? state.rows : [];
+  const total = state.status === "ready" ? state.total : 0;
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex flex-col gap-3 rounded-lg border border-sky-300/30 bg-sky-300/5 p-3 sm:flex-row sm:items-center"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-2 text-sm font-bold text-white">
+          <Sparkles size={15} className="text-[var(--accent-light)]" />
+          What should I test next?
+        </p>
+        <p className="mt-1 text-xs leading-5 text-[var(--muted-strong)]">
+          {state.status === "loading"
+            ? "Reading Jira queue…"
+            : state.status === "error"
+              ? state.message
+              : state.status === "ready"
+                ? rows.length
+                  ? `${rows.length} ready (${total} candidate${total === 1 ? "" : "s"} in flight)`
+                  : "No tickets are ready to verify right now."
+                : ""}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={pickForMe}
+          disabled={state.status !== "ready" || rows.length === 0 || isNavigating}
+          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white transition-colors hover:bg-[var(--accent-light)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Sparkles size={15} />
+          {isNavigating ? "Loading…" : "Pick for me"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          disabled={state.status !== "ready" || rows.length === 0}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/35 bg-sky-300/10 px-3 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Pick from queue
+          <ChevronDown size={15} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+      </div>
+      {open && rows.length > 0 ? (
+        <div
+          role="listbox"
+          className="absolute left-0 right-0 top-full z-30 mt-2 max-h-[480px] overflow-auto rounded-lg border border-sky-300/35 bg-black/95 p-2 shadow-2xl backdrop-blur"
+        >
+          {rows.map((row, index) => {
+            const collision = row.presence && row.presence.sessionId !== sessionId ? row.presence : null;
+            const isCurrent = row.issueKey === currentIssueKey;
+            return (
+              <button
+                key={row.issueKey}
+                type="button"
+                role="option"
+                aria-selected={isCurrent}
+                onClick={() => navigateTo(row.issueKey)}
+                className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] gap-3 rounded-lg p-3 text-left transition-colors ${
+                  isCurrent ? "bg-sky-300/15" : "hover:bg-white/5"
+                }`}
+              >
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--accent)]/20 text-xs font-bold text-[var(--accent-light)]">
+                  {index + 1}
+                </span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-white">{row.issueKey}</span>
+                    <span className="rounded-md border border-[var(--border)] bg-black/40 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--muted-strong)]">
+                      {row.status}
+                    </span>
+                    {row.mvpTrack ? (
+                      <span className="rounded-md border border-[var(--border)] bg-black/40 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--muted-strong)]">
+                        {row.mvpTrack}
+                      </span>
+                    ) : null}
+                    {collision ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-300/35 bg-amber-300/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-200">
+                        <Users size={11} />
+                        Loaded {collision.ageMinutes}m ago
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 truncate text-sm text-white">{row.summary}</p>
+                  {row.reasons.length ? (
+                    <p className="mt-1 flex items-center gap-1 truncate text-xs text-[var(--muted-strong)]">
+                      <Clock size={11} />
+                      {row.reasons.join(" · ")}
+                    </p>
+                  ) : null}
+                  {row.surfaceList.length ? (
+                    <p className="mt-1 truncate text-[11px] uppercase tracking-wide text-[var(--muted)]">
+                      {row.surfaceList.join(" / ")}
+                    </p>
+                  ) : null}
+                </div>
+                <ArrowRight size={16} className="self-center text-[var(--muted-strong)]" />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

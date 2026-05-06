@@ -2221,7 +2221,7 @@ function buildCodingAgentPrompt(
   ].join("\n");
 }
 
-function readJiraConfig(overrides: { jiraApiToken?: string } = {}):
+export function readJiraConfig(overrides: { jiraApiToken?: string } = {}):
   | { baseUrl: string; email: string; token: string }
   | { missingEnv: string[] } {
   const env = {
@@ -2249,7 +2249,7 @@ function readJiraConfig(overrides: { jiraApiToken?: string } = {}):
   }
 }
 
-async function jiraFetch<T>(
+export async function jiraFetch<T>(
   config: { baseUrl: string; email: string; token: string },
   path: string,
 ): Promise<T> {

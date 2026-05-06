@@ -7,6 +7,125 @@ import {
   getRecommendedAction,
   normalizeIssueKey,
 } from "./mvp-ticket-checklist.ts";
+import {
+  buildQueueJql,
+  isTestable,
+  normaliseCandidate,
+  rankCandidates,
+} from "./ticket-queue.ts";
+
+function makeRawCandidate({ key = "BDEV-100", fields = {} } = {}) {
+  return {
+    key,
+    fields: {
+      summary: "[AUTH] Token refresh storm",
+      status: { name: "Verifying" },
+      priority: { name: "High" },
+      updated: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      statuscategorychangedate: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      issuelinks: [],
+      customfield_10043: { value: "Auth" },
+      customfield_10044: { value: "Human Verifying" },
+      customfield_10045: { value: "Automated, Simulator, One Phone" },
+      customfield_10046: { value: "Ready" },
+      customfield_10047: "62",
+      ...fields,
+    },
+  };
+}
+
+test("buildQueueJql excludes done tickets and uses BDEV", () => {
+  const jql = buildQueueJql();
+  assert.match(jql, /project = BDEV/);
+  assert.match(jql, /statusCategory != "Done"/);
+  assert.match(jql, /Verifying/);
+});
+
+test("normaliseCandidate maps custom fields and status", () => {
+  const c = normaliseCandidate(makeRawCandidate());
+  assert.equal(c.issueKey, "BDEV-100");
+  assert.equal(c.status, "Verifying");
+  assert.equal(c.priority, "High");
+  assert.equal(c.mvpTrack, "Auth");
+  assert.equal(c.loopStage, "Human Verifying");
+  assert.equal(c.humanFinalReview, "Ready");
+  assert.equal(c.verifiedBuildOrCommit, "62");
+});
+
+test("normaliseCandidate skips done/closed candidates", () => {
+  assert.equal(
+    normaliseCandidate(
+      makeRawCandidate({ fields: { status: { name: "Done" } } }),
+    ),
+    null,
+  );
+});
+
+test("isTestable filters out passed Human Final Review", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({ fields: { customfield_10046: { value: "Passed" } } }),
+  );
+  assert.equal(isTestable(c), false);
+});
+
+test("rankCandidates pushes older Verifying tickets to the top", () => {
+  const fresh = normaliseCandidate(makeRawCandidate({ key: "BDEV-FRESH" }));
+  const stale = normaliseCandidate(
+    makeRawCandidate({
+      key: "BDEV-STALE",
+      fields: {
+        statuscategorychangedate: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString(),
+        updated: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString(),
+      },
+    }),
+  );
+  const rows = rankCandidates({ candidates: [fresh, stale] });
+  assert.equal(rows[0].issueKey, "BDEV-STALE");
+  assert.ok(rows[0].reasons.some((r) => /stale|Sitting/i.test(r)));
+});
+
+test("rankCandidates rewards downstream blockers", () => {
+  const plain = normaliseCandidate(makeRawCandidate({ key: "BDEV-A" }));
+  const blocker = normaliseCandidate(
+    makeRawCandidate({
+      key: "BDEV-B",
+      fields: {
+        issuelinks: [
+          {
+            type: { name: "Blocks", outward: "blocks", inward: "is blocked by" },
+            outwardIssue: { key: "BDEV-X" },
+          },
+          {
+            type: { name: "Blocks" },
+            outwardIssue: { key: "BDEV-Y" },
+          },
+        ],
+      },
+    }),
+  );
+  const rows = rankCandidates({ candidates: [plain, blocker] });
+  assert.equal(rows[0].issueKey, "BDEV-B");
+  assert.ok(rows[0].blocksKeys.length === 2);
+  assert.ok(rows[0].reasons.some((r) => /Blocks 2/.test(r)));
+});
+
+test("rankCandidates penalises recently-loaded tickets so they fall down the list", () => {
+  const a = normaliseCandidate(makeRawCandidate({ key: "BDEV-A" }));
+  const b = normaliseCandidate(makeRawCandidate({ key: "BDEV-B" }));
+  const ranked = rankCandidates({
+    candidates: [a, b],
+    recentlyLoadedKeys: new Set(["BDEV-A"]),
+  });
+  assert.equal(ranked[0].issueKey, "BDEV-B");
+  assert.ok(ranked[1].reasons.some((r) => /recently opened/i.test(r)));
+});
+
+test("rankCandidates surfaces build name when one is set", () => {
+  const c = normaliseCandidate(makeRawCandidate());
+  const [row] = rankCandidates({ candidates: [c] });
+  assert.ok(row.hasBuild);
+  assert.ok(row.reasons.some((r) => /build 62/.test(r)));
+});
 
 test("normalizes BDEV issue keys and rejects unsafe input", () => {
   assert.equal(normalizeIssueKey(" bdev-493 "), "BDEV-493");
