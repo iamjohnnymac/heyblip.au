@@ -21,6 +21,7 @@ import {
   ListChecks,
   LockKeyhole,
   MonitorSmartphone,
+  MoreHorizontal,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -97,11 +98,6 @@ const textWrapStyle: CSSProperties = {
 
 const viewportWidthStyle: CSSProperties = {
   width: "min(100%, calc(100vw - 2rem))",
-};
-
-const cardTextWidthStyle: CSSProperties = {
-  ...textWrapStyle,
-  maxWidth: "calc(100vw - 5.5rem)",
 };
 
 const surfaceNotes = [
@@ -244,23 +240,6 @@ function statusTone(status: string): string {
   }
   if (lower.includes("fail") || lower.includes("block")) return "border-red-400/30 bg-red-400/10 text-red-200";
   return "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-strong)]";
-}
-
-function formatDate(value?: string): string {
-  if (!value) return "Not returned";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat("en-AU", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function compactMobileText(value: string, maxLength = 58): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength - 3).trim()}...`;
 }
 
 function buildEmptyChecks(data: ChecklistViewModel): Record<string, boolean> {
@@ -422,7 +401,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   const workRecipe = data?.workRecipe ?? emptyWorkRecipe;
   const proofRecipe = data?.proofRecipe ?? emptyProofRecipe;
   const humanTestPlan = data?.humanTestPlan ?? emptyHumanTestPlan;
-  const [helperHidden, setHelperHidden] = useState(false);
+  const [helperHidden, setHelperHidden] = useState(true);
   const [coachState, setCoachState] = useState<CoachState>({ status: "idle" });
   const [copyResult, setCopyResult] = useState<{ id: string; status: "copied" | "failed" } | null>(null);
   const [checks, setChecks] = useState<Record<string, boolean>>(() => (data ? buildEmptyChecks(data) : {}));
@@ -590,210 +569,140 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
           className="mx-auto w-full min-w-0 max-w-[calc(100vw-2rem)] rounded-lg border border-[var(--border-strong)] bg-[var(--card-bg)] p-4 sm:max-w-7xl sm:p-6"
           style={viewportWidthStyle}
         >
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="mb-3 inline-flex max-w-full items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold text-[var(--muted-strong)]">
-                  <Sparkles size={16} className="shrink-0 text-[var(--accent-light)]" />
-                  <span className="min-w-0 leading-5">Blip Test Buddy</span>
-                </div>
-                <h1 className="break-words text-3xl font-bold leading-tight sm:text-5xl" style={textWrapStyle}>
-                  Do one safe thing next.
-                </h1>
-                <p className="mt-3 max-w-3xl text-base leading-7 text-[var(--muted-strong)]">
-                  Pick a BDEV ticket. Buddy turns it into plain-English steps and keeps the scary Jira detail tucked away.
-                </p>
-              </div>
-              <div className="flex w-full flex-col gap-3 sm:max-w-[520px]">
-              <TicketQueuePicker
-                accessParam={accessParam}
-                currentIssueKey={data?.issueKey ?? issueKey}
-                ready={ready}
-              />
-              <form className="grid w-full min-w-0 gap-3 rounded-lg border border-[var(--border)] bg-black/20 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <label className="sr-only" htmlFor="issue">
-                BDEV issue key
-              </label>
-              <div className="relative min-w-0">
-                <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-                <input
-                  id="issue"
-                  name="issue"
-                  defaultValue={issueKey}
-                  className="min-h-12 w-full rounded-lg border border-[var(--border)] bg-black/30 pl-10 pr-3 text-base font-bold uppercase text-white outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-                  placeholder="BDEV-493"
-                  autoCapitalize="characters"
-                />
-              </div>
-              {accessParam ? <input type="hidden" name="access" value={accessParam} /> : null}
-              <button
-                type="submit"
-                className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-white transition-colors hover:bg-[var(--accent-light)] sm:w-auto"
-              >
-                Load
-                <ArrowRight size={17} />
-              </button>
-            </form>
-              </div>
-            </div>
+          <div className="flex flex-col gap-4">
+            <BuddySuggestionStrip
+              accessParam={accessParam}
+              currentIssueKey={data?.issueKey ?? issueKey}
+              ready={ready}
+            />
 
             {ready && data ? (
               <>
-                <div className="grid gap-4 rounded-lg border border-[var(--border)] bg-black/20 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-2 rounded-lg bg-[var(--accent)]/15 px-3 py-2 text-sm font-bold text-[var(--accent-light)]">
-                        <TicketCheck size={16} />
-                        {data.issueKey}
-                      </span>
-                      <span className={`inline-flex rounded-lg border px-3 py-2 text-xs font-bold ${statusTone(data.status)}`}>
-                        {data.status || "No status"}
-                      </span>
-                    </div>
-                    <h2 className="mt-3 break-words text-xl font-bold leading-tight sm:text-2xl" style={cardTextWidthStyle} title={data.summary || "No summary returned"}>
-                      <span className="sm:hidden">{compactMobileText(data.summary || "No summary returned")}</span>
-                      <span className="hidden sm:inline">{data.summary || "No summary returned"}</span>
-                    </h2>
-                    <p className="mt-2 text-sm leading-6 text-[var(--muted-strong)]">
-                      Updated {formatDate(data.updated)} · Assignee {data.assignee || "Unassigned"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-3 lg:justify-end">
-                    <a
-                      href={data.issueUrl}
-                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
-                    >
-                      Jira
-                      <ExternalLink size={15} />
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => setChecks(buildEmptyChecks(data))}
-                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
-                    >
-                      <RefreshCcw size={16} />
-                      Clear ticks
-                    </button>
-                  </div>
-                </div>
+                <TicketHeaderStrip
+                  issueKey={data.issueKey}
+                  status={data.status}
+                  summary={data.summary}
+                  issueUrl={data.issueUrl}
+                  onClearTicks={() => setChecks(buildEmptyChecks(data))}
+                  onChangeTicket={() => {
+                    const next = window.prompt("Type a BDEV key (e.g. BDEV-486)", data.issueKey);
+                    if (!next) return;
+                    const trimmed = next.trim().toUpperCase();
+                    if (!/^BDEV-\d+$/.test(trimmed)) return;
+                    const params = new URLSearchParams();
+                    params.set("issue", trimmed);
+                    if (accessParam) params.set("access", accessParam);
+                    window.location.href = `/mvp-ticket-checklist?${params.toString()}`;
+                  }}
+                />
 
-                <div className={`grid gap-4 rounded-lg border p-4 md:grid-cols-[auto_minmax(0,1fr)] ${statusCard.className}`}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHelperHidden(false);
-                      scrollToCurrentStep();
-                    }}
-                    className="group flex min-h-20 items-center justify-center rounded-lg border border-white/10 bg-black/25 px-4 transition-colors hover:border-sky-300/45"
-                    aria-label="Show Blip Test Buddy"
-                  >
-                    <Image
-                      src="/mascot/blip-bot.png"
-                      alt="Blip Test Buddy"
-                      width={72}
-                      height={72}
-                      className="h-[72px] w-[72px] transition-transform group-hover:scale-105"
-                    />
-                  </button>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold uppercase tracking-normal">{statusCard.label}</p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--muted-strong)]">{statusCard.body}</p>
-                    {statusCard.localNote ? (
-                      <p className="mt-2 text-sm font-semibold leading-6 text-amber-200">
-                        {statusCard.localNote}
-                      </p>
-                    ) : null}
-                    <p className="mt-2 text-sm font-semibold text-sky-100">
-                      Buddy is here. Tap him anytime to jump to the helper.
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      {!hasAgentProof && agentUpdateTemplate ? (
-                        <CopyButton
-                          status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
-                          onClick={() => copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body)}
-                          label="Copy Agent Test Update"
-                        />
-                      ) : null}
-                      {!hasAgentProof ? (
-                        <CopyButton
-                          status={copyResult?.id === "agent-prompt-banner" ? copyResult.status : undefined}
-                          onClick={() => copyToClipboard("agent-prompt-banner", data.codingAgentPrompt)}
-                          label="Copy coding-agent prompt"
-                        />
-                      ) : null}
-                      {statusCard.localNote ? (
-                        <button
-                          type="button"
-                          onClick={() => window.location.reload()}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-amber-300/45 bg-amber-300/10 px-3 text-sm font-bold text-amber-100 transition-colors hover:bg-amber-300/20"
-                        >
-                          <RefreshCcw size={15} />
-                          Refresh from Jira
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHelperHidden(false);
-                          scrollToCurrentStep();
-                        }}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/35 bg-sky-300/10 px-3 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-300/15"
-                      >
-                        Show Buddy
-                      </button>
-                      <a
-                        href={data.issueUrl}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
-                      >
-                        Open Jira to paste it
-                        <ExternalLink size={15} />
-                      </a>
-                    </div>
-                  </div>
-                </div>
-
-                <section className="rounded-lg border border-sky-300/45 bg-sky-300/10 p-4 sm:p-5" id={currentStepDomId}>
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <section
+                  className={`rounded-lg border p-4 sm:p-5 ${
+                    allStepsComplete
+                      ? "border-emerald-300/45 bg-emerald-300/10"
+                      : !hasAgentProof || !hasBuild
+                        ? "border-amber-300/40 bg-amber-300/5"
+                        : "border-sky-300/45 bg-sky-300/10"
+                  }`}
+                  id={currentStepDomId}
+                >
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-bold uppercase text-[var(--muted-strong)]">Do this now</p>
+                      <p className={`text-xs font-bold uppercase tracking-wide ${
+                        allStepsComplete
+                          ? "text-emerald-200"
+                          : !hasAgentProof || !hasBuild
+                            ? "text-amber-200"
+                            : "text-sky-200"
+                      }`}>
+                        {allStepsComplete ? statusCard.label : !hasAgentProof || !hasBuild ? statusCard.label : "Do this now"}
+                      </p>
                       <h2 className="mt-1 break-words text-2xl font-bold leading-tight sm:text-3xl" style={textWrapStyle}>
                         {currentStep ? currentStep.title : "Write the result in Jira"}
                       </h2>
                     </div>
-                    <span className="rounded-lg border border-sky-300/30 bg-black/20 px-3 py-2 text-sm font-bold text-sky-100">
-                      Step {Math.min(currentStepIndex + 1, studentSteps.length || 1)} of {studentSteps.length || 1}
+                    <span className="rounded-lg border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-bold text-white/90">
+                      Step {Math.min(currentStepIndex + 1, studentSteps.length || 1)} / {studentSteps.length || 1}
                     </span>
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.38fr)]">
-                    <div className="grid gap-4">
-                      <p className="text-lg leading-8 text-white">{currentStep?.body || "Add the final PASS or FAIL evidence to Jira."}</p>
-                      {currentStep ? (
-                        <div className="grid gap-3 text-sm leading-6 sm:grid-cols-2">
-                          <div className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 p-3">
-                            <p className="font-bold text-emerald-100">Pass looks like</p>
-                            <p className="mt-1 text-[var(--muted-strong)]">{currentStep.pass}</p>
-                          </div>
-                          <div className="rounded-lg border border-red-300/25 bg-red-300/10 p-3">
-                            <p className="font-bold text-red-100">Fail looks like</p>
-                            <p className="mt-1 text-[var(--muted-strong)]">{currentStep.fail}</p>
-                          </div>
-                        </div>
-                      ) : null}
-                      <div className="flex flex-wrap gap-3">
-                        {currentStep ? (
-                          <button
-                            type="button"
-                            onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
-                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
-                          >
-                            <Check size={17} strokeWidth={3} />
-                            Mark this step done
-                          </button>
-                        ) : null}
+                  <p className="text-base leading-7 text-white">{currentStep?.body || "Add the final PASS or FAIL evidence to Jira."}</p>
+
+                  {currentStep ? (
+                    <div className="mt-4 grid gap-3 text-sm leading-6 sm:grid-cols-2">
+                      <div className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 p-3">
+                        <p className="font-bold text-emerald-100">Pass looks like</p>
+                        <p className="mt-1 text-[var(--muted-strong)]">{currentStep.pass}</p>
+                      </div>
+                      <div className="rounded-lg border border-red-300/25 bg-red-300/10 p-3">
+                        <p className="font-bold text-red-100">Fail looks like</p>
+                        <p className="mt-1 text-[var(--muted-strong)]">{currentStep.fail}</p>
                       </div>
                     </div>
-                    {!helperHidden ? (
+                  ) : null}
+
+                  {statusCard.localNote ? (
+                    <p className="mt-4 flex items-center gap-2 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm font-semibold text-amber-100">
+                      <RefreshCcw size={14} />
+                      {statusCard.localNote}
+                    </p>
+                  ) : null}
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {currentStep ? (
+                      <button
+                        type="button"
+                        onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                      >
+                        <Check size={17} strokeWidth={3} />
+                        Mark this step done
+                      </button>
+                    ) : null}
+                    {!hasAgentProof && agentUpdateTemplate ? (
+                      <CopyButton
+                        status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
+                        onClick={() => copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body)}
+                        label="Copy Agent Test Update"
+                      />
+                    ) : null}
+                    {!hasAgentProof ? (
+                      <CopyButton
+                        status={copyResult?.id === "agent-prompt-banner" ? copyResult.status : undefined}
+                        onClick={() => copyToClipboard("agent-prompt-banner", data.codingAgentPrompt)}
+                        label="Copy coding-agent prompt"
+                      />
+                    ) : null}
+                    {statusCard.localNote ? (
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-amber-300/45 bg-amber-300/10 px-3 text-sm font-bold text-amber-100 transition-colors hover:bg-amber-300/20"
+                      >
+                        <RefreshCcw size={15} />
+                        Refresh from Jira
+                      </button>
+                    ) : null}
+                    <a
+                      href={data.issueUrl}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
+                    >
+                      Open in Jira
+                      <ExternalLink size={15} />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setHelperHidden((value) => !value)}
+                      className="ml-auto inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/35 bg-sky-300/10 px-3 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-300/15"
+                      aria-expanded={!helperHidden}
+                    >
+                      <Sparkles size={15} />
+                      {helperHidden ? "Ask Buddy" : "Hide Buddy"}
+                    </button>
+                  </div>
+
+                  {!helperHidden ? (
+                    <div className="mt-4">
                       <BlipMascotGuide
                         compact
                         isLoading={coachState.status === "loading"}
@@ -804,17 +713,8 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         onNextStep={scrollToCurrentStep}
                         onHide={() => setHelperHidden(true)}
                       />
-                    ) : (
-                      <button
-                        type="button"
-                        className="flex min-h-20 items-center justify-center gap-3 rounded-lg border border-[var(--border)] bg-black/20 px-4 text-sm font-bold text-[var(--muted-strong)] transition-colors hover:text-white"
-                        onClick={() => setHelperHidden(false)}
-                      >
-                        <Image src="/mascot/blip-bot.png" alt="" width={44} height={44} className="h-11 w-11" />
-                        Show Buddy
-                      </button>
-                    )}
-                  </div>
+                    </div>
+                  ) : null}
                 </section>
 
                 <div className="rounded-lg border border-[var(--border)] bg-black/20 p-4">
@@ -1274,6 +1174,7 @@ function BlipMascotGuide({
             height={compact ? 72 : 96}
             className={compact ? "h-[72px] w-[72px]" : "h-24 w-24"}
             priority={false}
+            unoptimized
           />
         </motion.div>
         <div className="min-w-0 flex-1">
@@ -1375,7 +1276,113 @@ function buildIssueHref(issueKey: string, accessParam: string): string {
   return `/mvp-ticket-checklist?${params.toString()}`;
 }
 
-function TicketQueuePicker({
+function TicketHeaderStrip({
+  issueKey,
+  status,
+  summary,
+  issueUrl,
+  onClearTicks,
+  onChangeTicket,
+}: {
+  issueKey: string;
+  status: string;
+  summary: string;
+  issueUrl: string;
+  onClearTicks: () => void;
+  onChangeTicket: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(event: globalThis.MouseEvent) {
+      if (!containerRef.current) return;
+      if (containerRef.current.contains(event.target as Node)) return;
+      setOpen(false);
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-black/20 px-3 py-2">
+      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--accent)]/15 px-2 py-1 text-xs font-bold text-[var(--accent-light)]">
+        <TicketCheck size={13} />
+        {issueKey}
+      </span>
+      <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${statusTone(status)}`}>
+        {status || "—"}
+      </span>
+      <span
+        className="min-w-0 flex-1 truncate text-sm font-semibold text-white"
+        title={summary || ""}
+      >
+        {summary || "(no summary)"}
+      </span>
+      <a
+        href={issueUrl}
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--muted-strong)] transition-colors hover:text-white"
+        title="Open in Jira"
+        aria-label="Open in Jira"
+      >
+        <ExternalLink size={14} />
+      </a>
+      <div className="relative shrink-0" ref={containerRef}>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--muted-strong)] transition-colors hover:text-white"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="More ticket actions"
+        >
+          <MoreHorizontal size={14} />
+        </button>
+        {open ? (
+          <div
+            role="menu"
+            className="absolute right-0 top-full z-30 mt-1 w-48 rounded-md border border-[var(--border-strong)] bg-black/95 p-1 shadow-2xl backdrop-blur"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onChangeTicket();
+              }}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm text-white hover:bg-white/5"
+            >
+              <Search size={14} />
+              Change ticket…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onClearTicks();
+              }}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm text-white hover:bg-white/5"
+            >
+              <RefreshCcw size={14} />
+              Clear ticks
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function BuddySuggestionStrip({
   accessParam,
   currentIssueKey,
   ready,
@@ -1475,49 +1482,58 @@ function TicketQueuePicker({
 
   const rows = state.status === "ready" ? state.rows : [];
   const total = state.status === "ready" ? state.total : 0;
+  const top = rows[0];
+  const topReasons = top ? top.reasons.slice(0, 2).join(" · ") : "";
+  const onTop = top && top.issueKey === currentIssueKey;
 
   return (
     <div
       ref={containerRef}
-      className="relative flex flex-col gap-3 rounded-lg border border-sky-300/30 bg-sky-300/5 p-3 sm:flex-row sm:items-center"
+      className="relative flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/5 px-3 py-2"
     >
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-sm font-bold text-white">
-          <Sparkles size={15} className="text-[var(--accent-light)]" />
-          What should I test next?
-        </p>
-        <p className="mt-1 text-xs leading-5 text-[var(--muted-strong)]">
-          {state.status === "loading"
-            ? "Reading Jira queue…"
-            : state.status === "error"
-              ? state.message
-              : state.status === "ready"
-                ? rows.length
-                  ? `${rows.length} ready (${total} candidate${total === 1 ? "" : "s"} in flight)`
-                  : "No tickets are ready to verify right now."
-                : ""}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={pickForMe}
-          disabled={state.status !== "ready" || rows.length === 0 || isNavigating}
-          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white transition-colors hover:bg-[var(--accent-light)] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Sparkles size={15} />
-          {isNavigating ? "Loading…" : "Pick for me"}
-        </button>
+      <Sparkles size={14} className="shrink-0 text-[var(--accent-light)]" />
+      <span className="min-w-0 flex-1 truncate text-sm text-white">
+        {state.status === "loading"
+          ? "Buddy is checking your queue…"
+          : state.status === "error"
+            ? state.message
+            : !top
+              ? "Nothing is ready to verify right now."
+              : onTop
+                ? `You're on Buddy's #1 pick. ${rows.length - 1} more ready.`
+                : (
+                  <>
+                    <span className="text-[var(--muted)]">Buddy suggests </span>
+                    <span className="font-bold text-white">{top.issueKey}</span>
+                    {top.mvpTrack ? <span className="text-[var(--muted)]"> · {top.mvpTrack}</span> : null}
+                    {topReasons ? <span className="text-[var(--muted-strong)]"> — {topReasons}</span> : null}
+                  </>
+                )}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        {top && !onTop ? (
+          <button
+            type="button"
+            onClick={pickForMe}
+            disabled={isNavigating}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[var(--accent)] px-3 text-xs font-bold text-white transition-colors hover:bg-[var(--accent-light)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isNavigating ? "Loading…" : "Open"}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
           disabled={state.status !== "ready" || rows.length === 0}
           aria-expanded={open}
           aria-haspopup="listbox"
-          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/35 bg-sky-300/10 px-3 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-sky-300/35 bg-sky-300/10 px-2.5 text-xs font-bold text-sky-100 transition-colors hover:bg-sky-300/15 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Pick from queue
-          <ChevronDown size={15} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+          Queue
+          {state.status === "ready" && total > 0 ? (
+            <span className="rounded-sm bg-sky-300/20 px-1 text-[10px]">{total}</span>
+          ) : null}
+          <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
         </button>
       </div>
       {open && rows.length > 0 ? (
