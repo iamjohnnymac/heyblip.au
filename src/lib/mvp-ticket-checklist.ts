@@ -1,0 +1,2382 @@
+export const JIRA_DASHBOARD_URL = "https://heyblip.atlassian.net/jira/dashboards/10001";
+
+export const MVP_CUSTOM_FIELDS = {
+  mvpTrack: "customfield_10043",
+  loopStage: "customfield_10044",
+  verificationSurface: "customfield_10045",
+  humanFinalReview: "customfield_10046",
+  verifiedBuildOrCommit: "customfield_10047",
+} as const;
+
+const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9]+-\d+$/;
+const DEFAULT_ISSUE_KEY = "BDEV-493";
+
+const SURFACE_CONFIGS = [
+  {
+    id: "automated",
+    label: "Automated",
+    aliases: [/automated/i, /unit/i, /test command/i],
+    checklistLabel: "Have we named the exact automated proof?",
+    missingDetail: "Jira requires automated proof, but the ticket does not name the exact command or test fixture yet.",
+    tickWhen:
+      "Tick this after Jira names the exact command or test to run, for example a Swift test filter, worker test, or fixture-based check.",
+    template: ["Automated:", "- Command: [exact command]", "- Expected result: [what proves pass/fail]"],
+  },
+  {
+    id: "simulator",
+    label: "Simulator",
+    aliases: [/simulator/i, /sim\b/i],
+    checklistLabel: "Have we named the simulator scenario?",
+    missingDetail: "Jira requires simulator proof, but the ticket does not name the screen, route, fixture, or simulator scenario yet.",
+    tickWhen:
+      "Tick this after Jira names the simulator device/scenario and what the tester should see or inspect.",
+    template: ["Simulator:", "- Scenario: [screen/route/state to reproduce]", "- Device/runtime: [simulator model and iOS version]", "- Expected result: [visible pass/fail]"],
+  },
+  {
+    id: "one-phone",
+    label: "One Phone",
+    aliases: [/one phone/i, /single phone/i],
+    checklistLabel: "Have we named the one-phone device check?",
+    missingDetail: "Jira requires one-phone proof, but the ticket does not name the device, build, account, and expected result yet.",
+    tickWhen:
+      "Tick this after Jira names the build, account, device, and exact manual check to run on one phone.",
+    template: ["One Phone:", "- Build/device/account: [build, device, account]", "- Steps: [manual steps]", "- Expected result: [visible pass/fail]"],
+  },
+  {
+    id: "two-phones",
+    label: "Two Phones",
+    aliases: [/two phones/i, /2 phones/i],
+    checklistLabel: "Have we named the two-phone proof setup?",
+    missingDetail: "Jira requires two-phone proof, but the ticket does not name both accounts/devices and the direction of the check yet.",
+    tickWhen:
+      "Tick this after Jira names both devices/accounts, sender/receiver direction, and what pass/fail looks like on each phone.",
+    template: ["Two Phones:", "- Phone A/account: [device + account]", "- Phone B/account: [device + account]", "- Direction: [A to B / B to A / both]", "- Expected result: [visible pass/fail on both]"],
+  },
+  {
+    id: "testflight-apns",
+    label: "TestFlight/APNs",
+    aliases: [/testflight/i, /apns/i, /push/i],
+    checklistLabel: "Have we named the TestFlight/APNs proof?",
+    missingDetail: "Jira requires TestFlight/APNs proof, but the ticket does not name the build, push type, payload, or tap/open behavior yet.",
+    tickWhen:
+      "Tick this after Jira names the TestFlight build, notification type or payload, and expected receipt/tap behavior.",
+    template: ["TestFlight/APNs:", "- Build: [TestFlight build]", "- Push/payload: [friend_request / dm / fixture]", "- Expected result: [delivery, badge, tap route]"],
+  },
+  {
+    id: "ble",
+    label: "BLE",
+    aliases: [/\bble\b/i, /bluetooth/i, /nearby/i],
+    checklistLabel: "Have we named the BLE/Nearby proof?",
+    missingDetail: "Jira requires BLE proof, but the ticket does not name peer/device setup, friend identity matching, and relaunch behavior yet.",
+    tickWhen:
+      "Tick this after Jira names the two-device BLE setup, expected peer/friend count, and any relaunch/background requirement.",
+    template: ["BLE:", "- Devices/accounts: [nearby devices and accounts]", "- Expected peer/friend state: [count or identity match]", "- Relaunch/background step: [if required]"],
+  },
+  {
+    id: "worker-smoke",
+    label: "Worker Smoke",
+    aliases: [/worker smoke/i, /worker/i, /api smoke/i],
+    checklistLabel: "Have we named the worker smoke proof?",
+    missingDetail: "Jira requires worker smoke proof, but the ticket does not name the endpoint, request, or expected response/log yet.",
+    tickWhen:
+      "Tick this after Jira names the worker/API smoke request and the expected response or log evidence.",
+    template: ["Worker Smoke:", "- Endpoint/request: [exact endpoint or command]", "- Expected result: [status/log/body that proves pass/fail]"],
+  },
+  {
+    id: "sentry-watch",
+    label: "Sentry Watch",
+    aliases: [/sentry watch/i, /sentry/i],
+    checklistLabel: "Have we named the Sentry watch window?",
+    missingDetail: "Jira requires a Sentry watch, but the ticket does not name release/build, issue shape, and time window yet.",
+    tickWhen:
+      "Tick this after Jira names the release/build, Sentry issue shape to watch, and the time window for no-new-events or expected recovery.",
+    template: ["Sentry Watch:", "- Release/build: [release or build]", "- Issue shape: [Sentry issue/group/query]", "- Watch window: [duration]", "- Pass condition: [no new events / expected recovered events only]"],
+  },
+] as const;
+
+type SurfaceConfig = (typeof SURFACE_CONFIGS)[number];
+
+const WORK_KIND_CONFIGS = [
+  {
+    id: "auth",
+    label: "Auth",
+    match: /auth|jwt|token|login|register|account-not-found|session/i,
+    risk: "Auth fixes can look good locally while leaving retry storms, stale identity, or offline recovery broken.",
+    acceptanceQuestions: [
+      "Which auth failure is being fixed: timeout, 404, account-not-found, stale token, or offline fallback?",
+      "What exact user-visible behavior proves recovery worked?",
+      "What must not happen: repeated alerts, infinite retry, logout, duplicate registration, or silent message loss?",
+    ],
+    reproduceSteps: [
+      "Name the account/build state before starting.",
+      "Trigger the exact auth failure or fallback path from the ticket.",
+      "Record expected retry/backoff, alert, and recovery behavior.",
+    ],
+    guardrails: [
+      "Do not broaden auth state cleanup beyond the locked failure path.",
+      "Do not hide auth errors without proving recovery or user-visible fallback.",
+      "Add a deterministic check for retry/backoff, token refresh, or account recovery where possible.",
+    ],
+    closeoutEvidence: [
+      "Attach the command or simulator proof for the auth path.",
+      "Record whether alerts/retries stopped after the expected recovery window.",
+      "If device state matters, include build, account, and app foreground/background state.",
+    ],
+    outOfScope: ["UI polish", "unrelated login redesign", "message transport behavior unless auth directly blocks it"],
+  },
+  {
+    id: "friendship",
+    label: "Friendship",
+    match: /friend|friendship|request|accept|contact/i,
+    risk: "Friendship bugs often create asymmetric state, so both accounts need a clear before/after identity check.",
+    acceptanceQuestions: [
+      "Which direction is being tested: requester to recipient, recipient back to requester, or both?",
+      "What exact UI/database state proves both users see the friendship?",
+      "Which downstream surfaces are intentionally out of scope: chat list, Nearby, notifications, or BLE?",
+    ],
+    reproduceSteps: [
+      "Name both accounts and their starting friend state.",
+      "Run the request/accept path in the failing direction.",
+      "Check both users after relaunch if symmetry is part of the bug.",
+    ],
+    guardrails: [
+      "Do not patch chat or Nearby until friendship identity is proven or explicitly scoped.",
+      "Keep account identity and friend ID mapping visible in logs/evidence.",
+      "Prefer one failing symmetry test or fixture over broad state rewrites.",
+    ],
+    closeoutEvidence: [
+      "Show requester and recipient final state.",
+      "Record whether relaunch preserves the accepted friendship.",
+      "Link any downstream chat/Nearby blocker instead of expanding this ticket.",
+    ],
+    outOfScope: ["chat delivery", "Nearby discovery", "push badge behavior unless acceptance explicitly names them"],
+  },
+  {
+    id: "chat-list",
+    label: "Chat List",
+    match: /chat list|conversation list|inbox|thread list/i,
+    risk: "Chat list fixes can hide deeper friendship or message-delivery asymmetry, so list visibility must be tied to the source state.",
+    acceptanceQuestions: [
+      "Which user is missing the chat row, and after what event?",
+      "Should the row appear from friendship alone, from first message, or from unread/offline delivery?",
+      "What state should be identical across both phones or simulators?",
+    ],
+    reproduceSteps: [
+      "Name the two accounts and current friendship state.",
+      "Open the chat list from a fresh launch on both sides if symmetry matters.",
+      "Record whether the row appears before and after a message send.",
+    ],
+    guardrails: [
+      "Do not manufacture chat rows that bypass friendship or message state rules.",
+      "Keep changes scoped to list derivation, refresh, or identity mapping named by acceptance.",
+      "Add a fixture test for row visibility when possible.",
+    ],
+    closeoutEvidence: [
+      "Show chat list state for the affected account(s).",
+      "Record the data source that created the row: friend, message, unread, or cached thread.",
+      "Attach simulator proof unless real phones are required by the surface field.",
+    ],
+    outOfScope: ["message transport retries", "BLE delivery", "notification badges unless the ticket names them"],
+  },
+  {
+    id: "text-dm",
+    label: "Text DM",
+    match: /text dm|direct message|message delivery|offline message|dm delivery|chat message/i,
+    risk: "Text DM work crosses storage, relay, notification, and transport fallback, so each delivery state needs a named proof surface.",
+    acceptanceQuestions: [
+      "Which state is being proved: foreground, background, offline, relaunch, or queued retry?",
+      "Which direction and account pair are in scope?",
+      "What visible result proves delivery: bubble appears, unread state, notification, retry cleared, or failure surfaced?",
+    ],
+    reproduceSteps: [
+      "Name sender, receiver, app state, and transport expectation.",
+      "Send the smallest message fixture that exposes the failure.",
+      "Record what each phone/app shows before relaunch and after relaunch.",
+    ],
+    guardrails: [
+      "Do not change every transport at once; start from the failing delivery path.",
+      "Keep message persistence, notification, and transport fallback evidence separate.",
+      "Add a focused message-state test where the failure can run off-device.",
+    ],
+    closeoutEvidence: [
+      "Record sender/receiver accounts and message ID or timestamp.",
+      "Show whether the receiver bubble/list/unread state arrived.",
+      "If offline/background is in scope, include the exact wake or relaunch behavior.",
+    ],
+    outOfScope: ["media", "PTT", "group chat", "Nearby identity unless it blocks delivery acceptance"],
+  },
+  {
+    id: "push-badge",
+    label: "Push/Badge",
+    match: /push|badge|notification|apns|deeplink|deep link|tap route/i,
+    risk: "Push and badge fixes can pass in foreground but fail across APNs, cold launch, or tap routing.",
+    acceptanceQuestions: [
+      "Which notification type is being proved: friend request, DM, badge update, or tap route?",
+      "Which app state is required: foreground, background, killed/cold launch, or TestFlight?",
+      "What exact badge count or route should be visible after open?",
+    ],
+    reproduceSteps: [
+      "Name app state and notification payload/source.",
+      "Trigger the notification path once, then record receipt, badge, and tap destination.",
+      "Repeat on TestFlight/APNs if the surface requires real push.",
+    ],
+    guardrails: [
+      "Do not treat simulator/local notification success as APNs success.",
+      "Keep badge increment and badge clearing rules explicit.",
+      "Avoid changing unrelated notification categories or routes.",
+    ],
+    closeoutEvidence: [
+      "Record payload type, build, app state, and tap destination.",
+      "Attach badge before/after value.",
+      "Use real-phone/TestFlight evidence for APNs or background delivery.",
+    ],
+    outOfScope: ["message delivery correctness", "friendship acceptance logic", "BLE transport"],
+  },
+  {
+    id: "nearby-ble",
+    label: "Nearby/BLE",
+    match: /nearby|ble|bluetooth|mesh peer|peer count|advertis/i,
+    risk: "Nearby/BLE fixes need real-device proof because simulator can validate UI wiring but not radio behavior.",
+    acceptanceQuestions: [
+      "Is this raw mesh peer count, accepted-friend nearby count, identity matching, or stale-peer cleanup?",
+      "Which devices/accounts must be near each other?",
+      "What should happen after relaunch/background or after a peer disappears?",
+    ],
+    reproduceSteps: [
+      "Name both devices, accounts, and friend relationship before testing.",
+      "Record raw mesh peer count and accepted-friend nearby count separately.",
+      "Relaunch both apps if stale peer cleanup or identity persistence is in scope.",
+    ],
+    guardrails: [
+      "Do not close a BLE/Nearby ticket from simulator evidence alone.",
+      "Keep mesh peer count and friend-nearby identity as separate facts.",
+      "Do not patch chat/friendship state unless the ticket proves identity mapping is the blocker.",
+    ],
+    closeoutEvidence: [
+      "Include two-phone device/account setup.",
+      "Record raw mesh peer count versus friends-nearby count.",
+      "Attach relaunch/background result when required.",
+    ],
+    outOfScope: ["message relay", "push notification routing", "UI polish unless it blocks the nearby proof"],
+  },
+  {
+    id: "observability",
+    label: "Observability",
+    match: /sentry|logging|alert|severity|observability|instrument/i,
+    risk: "Observability fixes should improve signal without hiding real production failures.",
+    acceptanceQuestions: [
+      "Which alert, log, severity, or Sentry group is being changed?",
+      "What should still be captured after the cleanup?",
+      "What would prove the noise has stopped without masking a real failure?",
+    ],
+    reproduceSteps: [
+      "Name the current alert/log/Sentry issue shape.",
+      "Trigger the noisy path or inspect the release where it appears.",
+      "Record the expected new severity, grouping, or suppression rule.",
+    ],
+    guardrails: [
+      "Do not blanket-suppress errors unless acceptance names the safe condition.",
+      "Keep the original failure observable at a lower severity or with better grouping where needed.",
+      "Use a Sentry watch or log assertion if the surface requires it.",
+    ],
+    closeoutEvidence: [
+      "Record release/build and Sentry query or issue group.",
+      "Show before/after severity or grouping behavior.",
+      "Include a watch window if production noise is the acceptance target.",
+    ],
+    outOfScope: ["fixing the underlying product bug unless the ticket names it", "broad logging rewrites"],
+  },
+] as const;
+
+const TRACK_PROOF_HINTS = [
+  {
+    id: "track-auth",
+    match: /auth/i,
+    label: "Have we named the auth recovery scenario?",
+    missingDetail:
+      "MVP Track is Auth, so the ticket should name the auth failure/recovery path, such as token 404, account-not-found, retry storm, or re-registration.",
+    tickWhen:
+      "Tick this after Jira states the exact auth failure, the allowed recovery path, and what must not happen, such as infinite retry.",
+    template: ["Track-specific Auth:", "- Failure path: [/v1/auth/token 404 / account-not-found / timeout / other]", "- Recovery path: [re-auth / re-register / clear state / surface unrecovered loss]", "- Must not happen: [retry storm / silent loss / stuck login]"],
+  },
+  {
+    id: "track-text-dm",
+    match: /text dm|chat list|chat/i,
+    label: "Have we named the message/chat behavior being proved?",
+    missingDetail:
+      "This chat/message ticket should name the direction, account pair, message state, and visible pass/fail behavior.",
+    tickWhen:
+      "Tick this after Jira names the sender/receiver or chat-list state and what must appear, queue, retry, or clear.",
+    template: ["Track-specific Chat/Text DM:", "- Accounts/direction: [sender -> receiver]", "- Message/chat state: [foreground / background / offline / relaunch]", "- Expected result: [visible message/list/badge state]"],
+  },
+  {
+    id: "track-push",
+    match: /push|badge/i,
+    label: "Have we named the push/badge behavior being proved?",
+    missingDetail:
+      "This push/badge ticket should name notification type, badge rule, tap route, and foreground/background state.",
+    tickWhen:
+      "Tick this after Jira names the notification payload/type, badge increment/clear rule, and expected tap destination.",
+    template: ["Track-specific Push/Badge:", "- Notification type: [friend_request / dm / local fixture]", "- App state: [foreground / background / cold launch]", "- Expected result: [badge/tap route/clear rule]"],
+  },
+  {
+    id: "track-nearby-ble",
+    match: /nearby|ble/i,
+    label: "Have we named the Nearby/BLE identity proof?",
+    missingDetail:
+      "This Nearby/BLE ticket should name the devices, accounts, accepted friend identity, mesh peer count, and stale-peer cleanup expectation.",
+    tickWhen:
+      "Tick this after Jira names device/account setup and expected friend-nearby versus raw mesh peer behavior.",
+    template: ["Track-specific Nearby/BLE:", "- Devices/accounts: [device + account list]", "- Expected identity match: [friend key/user must match peer]", "- Stale/ghost behavior: [cleanup/relaunch expectation]"],
+  },
+] as const;
+
+export type JiraChecklistResult =
+  | {
+      status: "missing-config";
+      issueKey: string;
+      dashboardUrl: string;
+      missingEnv: string[];
+      message: string;
+    }
+  | {
+      status: "invalid-issue";
+      issueKey: string;
+      dashboardUrl: string;
+      message: string;
+    }
+  | {
+      status: "fetch-error";
+      issueKey: string;
+      dashboardUrl: string;
+      issueUrl?: string;
+      message: string;
+    }
+  | {
+      status: "ready";
+      issueKey: string;
+      dashboardUrl: string;
+      issueUrl: string;
+      data: ChecklistViewModel;
+    };
+
+export type JiraComment = {
+  id: string;
+  author: string;
+  created: string;
+  text: string;
+};
+
+export type JiraIssueLink = {
+  key: string;
+  relationship: string;
+  summary: string;
+  status: string;
+};
+
+export type ChecklistInput = {
+  issueKey: string;
+  summary: string;
+  status: string;
+  descriptionText: string;
+  customFields: {
+    mvpTrack: string;
+    loopStage: string;
+    verificationSurface: string;
+    humanFinalReview: string;
+    verifiedBuildOrCommit: string;
+  };
+  comments: JiraComment[];
+  links: JiraIssueLink[];
+  parent?: JiraIssueLink;
+  issueUrl: string;
+  issueType?: string;
+  priority?: string;
+  assignee?: string;
+  reporter?: string;
+  created?: string;
+  updated?: string;
+};
+
+export type RecommendedAction = {
+  title: string;
+  body: string;
+  steps: string[];
+};
+
+export type WorkRecipeViewModel = {
+  kind: string;
+  source: string;
+  risk: string;
+  testingPosture: string;
+  proofAuthority: ProofAuthorityViewModel;
+  aiOperatingModel: AiOperatingModelViewModel;
+  issueSignals: string[];
+  acceptanceQuestions: string[];
+  reproduceSteps: string[];
+  guardrails: string[];
+  closeoutEvidence: string[];
+  outOfScope: string[];
+  surfaceCards: WorkSurfaceCard[];
+};
+
+export type HumanTestPlanViewModel = {
+  title: string;
+  summary: string;
+  canAgentFinishAlone: boolean;
+  agentStatusLabel: string;
+  humanStatusLabel: string;
+  agentUpdate: AgentTestUpdateViewModel;
+  dashboardUpdateRule: string;
+  steps: HumanTestStep[];
+};
+
+export type HumanTestStep = {
+  title: string;
+  owner: "Agent" | "John/Tay";
+  surface: string;
+  doThis: string;
+  passMeans: string;
+  failMeans: string;
+};
+
+export type AgentTestUpdateViewModel = {
+  found: boolean;
+  status: "passed" | "failed" | "not-run" | "unknown";
+  label: string;
+  buildOrCommit: string;
+  humanVerificationNeeded: boolean | null;
+  humanTestRequested: string;
+  evidence: string[];
+  surfaceResults: {
+    automated: string;
+    simulator: string;
+    workerSmoke: string;
+  };
+  source?: {
+    author: string;
+    created: string;
+  };
+};
+
+export type AiOperatingModelViewModel = {
+  mode: "human-alignment" | "agent-afk" | "human-verification";
+  label: string;
+  summary: string;
+  smartZoneRule: string;
+  handoffRule: string;
+  promptRules: string[];
+  checklist: AiOperatingCheck[];
+};
+
+export type AiOperatingCheck = {
+  label: string;
+  checked: boolean;
+  detail: string;
+  tickWhen: string;
+  source: string;
+};
+
+export type ProofAuthorityViewModel = {
+  level: "agent-can-confirm" | "human-real-phone-required" | "human-external-watch-required" | "needs-surface";
+  label: string;
+  summary: string;
+  agentMayClaimDone: boolean;
+  agentDoneLanguage: string;
+  humanVerificationLanguage: string;
+  proofRequired: string[];
+};
+
+export type WorkSurfaceCard = {
+  label: string;
+  active: boolean;
+  detail: string;
+  requiredBecause: string;
+  needsHumanDevice: boolean;
+  agentVerifiable: boolean;
+};
+
+export type ChecklistViewModel = ChecklistInput & {
+  fields: {
+    mvpTrack: FieldDisplay;
+    loopStage: FieldDisplay;
+    verificationSurface: FieldDisplay;
+    humanFinalReview: FieldDisplay;
+    verifiedBuildOrCommit: FieldDisplay;
+  };
+  workRecipe: WorkRecipeViewModel;
+  proofRecipe: ProofRecipeViewModel;
+  humanTestPlan: HumanTestPlanViewModel;
+  recommendedAction: RecommendedAction;
+  checklistSections: ChecklistSection[];
+  commentTemplates: CommentTemplate[];
+  codingAgentPrompt: string;
+};
+
+export type FieldDisplay = {
+  label: string;
+  fieldId: string;
+  value: string;
+  empty: boolean;
+};
+
+export type ChecklistSection = {
+  title: string;
+  items: ChecklistItem[];
+};
+
+export type ChecklistItem = {
+  label: string;
+  checked: boolean;
+  detail: string;
+  tickWhen: string;
+  source?: string;
+};
+
+export type ProofRecipeRequirement = {
+  id: string;
+  label: string;
+  surface: string;
+  requiredBecause: string;
+  hasConcreteProof: boolean;
+  detail: string;
+  tickWhen: string;
+  templateLines: string[];
+};
+
+export type ProofRecipeViewModel = {
+  foundStructuredRecipe: boolean;
+  source: string;
+  requiredSurfaces: string[];
+  requirements: ProofRecipeRequirement[];
+  missingCount: number;
+  template: string;
+};
+
+export type CommentTemplate = {
+  id: string;
+  title: string;
+  body: string;
+  audience: "human" | "agent";
+};
+
+type JiraIssueResponse = {
+  key?: string;
+  fields?: Record<string, unknown>;
+};
+
+type JiraCommentsResponse = {
+  comments?: unknown[];
+};
+
+export function normalizeIssueKey(value: string | string[] | undefined): string | null {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const issueKey = (rawValue || DEFAULT_ISSUE_KEY).trim().toUpperCase();
+  return ISSUE_KEY_PATTERN.test(issueKey) ? issueKey : null;
+}
+
+export async function getJiraTicketChecklist(
+  issueParam: string | string[] | undefined,
+  overrides: { jiraApiToken?: string } = {},
+): Promise<JiraChecklistResult> {
+  const issueKey = normalizeIssueKey(issueParam);
+
+  if (!issueKey) {
+    return {
+      status: "invalid-issue",
+      issueKey: String(Array.isArray(issueParam) ? issueParam[0] : issueParam || ""),
+      dashboardUrl: JIRA_DASHBOARD_URL,
+      message: "Use a Jira issue key like BDEV-493.",
+    };
+  }
+
+  const config = readJiraConfig(overrides);
+
+  if ("missingEnv" in config) {
+    return {
+      status: "missing-config",
+      issueKey,
+      dashboardUrl: JIRA_DASHBOARD_URL,
+      missingEnv: config.missingEnv,
+      message: "Add the Jira environment variables on the server to load this checklist.",
+    };
+  }
+
+  const issueUrl = `${config.baseUrl}/browse/${encodeURIComponent(issueKey)}`;
+
+  try {
+    const issueFields = [
+      "summary",
+      "status",
+      "issuetype",
+      "priority",
+      "assignee",
+      "reporter",
+      "created",
+      "updated",
+      "description",
+      "issuelinks",
+      "parent",
+      ...Object.values(MVP_CUSTOM_FIELDS),
+    ].join(",");
+
+    const [issueResponse, commentsResponse] = await Promise.all([
+      jiraFetch<JiraIssueResponse>(
+        config,
+        `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=${encodeURIComponent(issueFields)}`,
+      ),
+      jiraFetch<JiraCommentsResponse>(
+        config,
+        `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?maxResults=50&orderBy=-created`,
+      ),
+    ]);
+
+    const fields = issueResponse.fields || {};
+    const comments = Array.isArray(commentsResponse.comments)
+      ? commentsResponse.comments.map(toComment).filter((comment): comment is JiraComment => Boolean(comment))
+      : [];
+
+    const input: ChecklistInput = {
+      issueKey: issueResponse.key || issueKey,
+      summary: fieldToText(fields.summary),
+      status: nestedText(fields.status, "name"),
+      issueType: nestedText(fields.issuetype, "name"),
+      priority: nestedText(fields.priority, "name"),
+      assignee: nestedText(fields.assignee, "displayName"),
+      reporter: nestedText(fields.reporter, "displayName"),
+      created: fieldToText(fields.created),
+      updated: fieldToText(fields.updated),
+      descriptionText: adfToPlainText(fields.description),
+      customFields: {
+        mvpTrack: fieldToText(fields[MVP_CUSTOM_FIELDS.mvpTrack]),
+        loopStage: fieldToText(fields[MVP_CUSTOM_FIELDS.loopStage]),
+        verificationSurface: fieldToText(fields[MVP_CUSTOM_FIELDS.verificationSurface]),
+        humanFinalReview: fieldToText(fields[MVP_CUSTOM_FIELDS.humanFinalReview]),
+        verifiedBuildOrCommit: fieldToText(fields[MVP_CUSTOM_FIELDS.verifiedBuildOrCommit]),
+      },
+      comments,
+      links: toIssueLinks(fields.issuelinks),
+      parent: toParentLink(fields.parent),
+      issueUrl,
+    };
+
+    return {
+      status: "ready",
+      issueKey,
+      dashboardUrl: JIRA_DASHBOARD_URL,
+      issueUrl,
+      data: buildChecklistViewModel(input),
+    };
+  } catch (error) {
+    return {
+      status: "fetch-error",
+      issueKey,
+      dashboardUrl: JIRA_DASHBOARD_URL,
+      issueUrl,
+      message: error instanceof Error ? error.message : "Jira data could not be loaded.",
+    };
+  }
+}
+
+export function buildChecklistViewModel(input: ChecklistInput): ChecklistViewModel {
+  const fields = {
+    mvpTrack: fieldDisplay("MVP Track", MVP_CUSTOM_FIELDS.mvpTrack, input.customFields.mvpTrack),
+    loopStage: fieldDisplay("MVP Loop Stage", MVP_CUSTOM_FIELDS.loopStage, input.customFields.loopStage),
+    verificationSurface: fieldDisplay(
+      "Verification Surface",
+      MVP_CUSTOM_FIELDS.verificationSurface,
+      input.customFields.verificationSurface,
+    ),
+    humanFinalReview: fieldDisplay(
+      "Human Final Review",
+      MVP_CUSTOM_FIELDS.humanFinalReview,
+      input.customFields.humanFinalReview,
+    ),
+    verifiedBuildOrCommit: fieldDisplay(
+      "Verified Build/Commit",
+      MVP_CUSTOM_FIELDS.verifiedBuildOrCommit,
+      input.customFields.verifiedBuildOrCommit,
+    ),
+  };
+
+  const evidenceText = [input.descriptionText, ...input.comments.map((comment) => comment.text)].join("\n");
+  const hasAcceptance = /acceptance|done when|pass\/fail|pass-fail/i.test(evidenceText);
+  const hasRepro = /repro|steps to reproduce|actual result|expected result|device|simulator|build/i.test(evidenceText);
+  const hasEvidence = /evidence|verified|build|commit|testflight|simulator|passed|failed/i.test(evidenceText);
+  const hasOutOfScope = /out of scope|non-goal|not in scope|do not touch/i.test(evidenceText);
+  const workRecipe = buildWorkRecipeViewModel(input, evidenceText);
+  const proofRecipe = buildProofRecipeViewModel(input, evidenceText);
+  const humanTestPlan = buildHumanTestPlanViewModel(input, workRecipe, proofRecipe);
+
+  const checklistSections: ChecklistSection[] = [
+    {
+      title: "Acceptance Lock",
+      items: [
+        {
+          label: "Am I looking at the right ticket?",
+          checked: Boolean(input.issueKey && input.summary),
+          detail: `${input.issueKey}: ${input.summary || "No summary returned"}`,
+          tickWhen: "Tick this after you confirm the key and summary match the work you meant to run.",
+        },
+        {
+          label: "Is this in the right bucket?",
+          checked: !fields.mvpTrack.empty,
+          detail: `MVP Track is ${fields.mvpTrack.value}.`,
+          tickWhen: "Tick this after the track matches the real feature area, not just because Jira has any value.",
+        },
+        {
+          label: "Do we know where it is in the loop?",
+          checked: !fields.loopStage.empty,
+          detail: `MVP Loop Stage is ${fields.loopStage.value}.`,
+          tickWhen: "Tick this after the stage matches what is actually happening right now.",
+        },
+        {
+          label: "Is the pass/fail target written down?",
+          checked: hasAcceptance,
+          detail: hasAcceptance
+            ? `Acceptance language found for ${workRecipe.kind}.`
+            : `Add locked ${workRecipe.kind} acceptance before coding.`,
+          tickWhen: `Tick this only when a human could read Jira and know exactly what passes and fails for ${workRecipe.kind}.`,
+          source: workRecipe.source,
+        },
+        ...workRecipe.acceptanceQuestions.map((question) => ({
+          label: question,
+          checked: hasQuestionEvidence(question, evidenceText),
+          detail: `This question is required for ${workRecipe.kind}: ${workRecipe.risk}`,
+          tickWhen: "Tick after the answer is written directly on the Jira ticket or in the proof recipe comment.",
+          source: `${workRecipe.kind} recipe`,
+        })),
+        {
+          label: "Did we explicitly say what is out of scope?",
+          checked: hasOutOfScope,
+          detail: hasOutOfScope
+            ? "Out-of-scope language found in Jira."
+            : `Suggested out of scope: ${workRecipe.outOfScope.join(", ")}.`,
+          tickWhen: "Tick after Jira names what the agent must not touch during this ticket.",
+          source: `${workRecipe.kind} scope guardrail`,
+        },
+      ],
+    },
+    {
+      title: "Reproduce Current Failure",
+      items: [
+        {
+          label: `Have we reproduced the ${workRecipe.kind} failure?`,
+          checked: hasRepro,
+          detail: hasRepro
+            ? "Repro/device/build language found in Jira."
+            : "Add a repro comment before coding or explicitly state why this is a preventive/test-only ticket.",
+          tickWhen: "Tick after Jira has build, account/device/simulator, exact steps, expected result, and actual result.",
+          source: workRecipe.source,
+        },
+        ...workRecipe.reproduceSteps.map((step) => ({
+          label: step,
+          checked: hasQuestionEvidence(step, evidenceText),
+          detail: `Repro step generated for ${workRecipe.kind}.`,
+          tickWhen: "Tick after this exact repro detail is written in Jira evidence.",
+          source: `${workRecipe.kind} repro recipe`,
+        })),
+      ],
+    },
+    {
+      title: "Agent Guardrails",
+      items: [
+        ...workRecipe.aiOperatingModel.checklist.map((item) => ({
+          label: item.label,
+          checked: item.checked,
+          detail: item.detail,
+          tickWhen: item.tickWhen,
+          source: item.source,
+        })),
+        ...workRecipe.guardrails.map((guardrail) => ({
+          label: guardrail,
+          checked: hasAcceptance && hasOutOfScope,
+          detail: `Guardrail generated for ${workRecipe.kind}. It keeps the patch inside the locked work/testing boundary.`,
+          tickWhen: "Tick after the agent handoff or acceptance lock includes this constraint.",
+          source: `${workRecipe.kind} coding guardrail`,
+        })),
+        {
+          label: "Are blockers and related tickets linked?",
+          checked: Boolean(input.parent || input.links.length > 0),
+          detail: input.parent
+            ? `Parent ${input.parent.key}: ${input.parent.summary || input.parent.status || "linked"}`
+            : input.links.length
+              ? `${input.links.length} linked issue${input.links.length === 1 ? "" : "s"}.`
+              : "Link blockers, duplicates, parent epics, or related regressions before dispatch.",
+          tickWhen: "Tick after links explain blockers, duplicates, regressions, or parent work clearly enough for the next agent.",
+        },
+      ],
+    },
+    {
+      title: "Verification Plan",
+      items: [
+        {
+          label: "Do we know how this will be verified?",
+          checked: !fields.verificationSurface.empty,
+          detail: `Verification Surface is ${fields.verificationSurface.value}.`,
+          tickWhen: "Tick this after the surfaces match the ticket risk: automated/simulator where possible, real devices where required.",
+          source: "Jira field",
+        },
+        ...proofRecipe.requirements.map((requirement) => ({
+          label: requirement.label,
+          checked: requirement.hasConcreteProof,
+          detail: requirement.detail,
+          tickWhen: requirement.tickWhen,
+          source: requirement.requiredBecause,
+        })),
+      ],
+    },
+    {
+      title: "Closeout Evidence",
+      items: [
+        ...workRecipe.closeoutEvidence.map((evidence) => ({
+          label: evidence,
+          checked: hasQuestionEvidence(evidence, evidenceText),
+          detail: `Closeout evidence generated for ${workRecipe.kind}.`,
+          tickWhen: "Tick after the Jira evidence comment includes this item with actual values, not placeholders.",
+          source: `${workRecipe.kind} closeout recipe`,
+        })),
+        {
+          label: "Is the human review state set?",
+          checked: !fields.humanFinalReview.empty,
+          detail: `Human Final Review is ${fields.humanFinalReview.value}.`,
+          tickWhen: "Tick this after the value matches the real handoff state: Not Ready, Ready, Passed, or Failed.",
+        },
+        {
+          label: "Is there a build or commit to verify?",
+          checked: !fields.verifiedBuildOrCommit.empty,
+          detail: `Verified Build/Commit is ${fields.verifiedBuildOrCommit.value}.`,
+          tickWhen: "Tick this only when there is an exact build number, merge SHA, or commit that John/Tay can verify.",
+        },
+        {
+          label: "Is there evidence on the ticket?",
+          checked: hasEvidence,
+          detail: hasEvidence ? "Evidence language found in Jira comments or description." : "Paste the verification evidence template after checks run.",
+          tickWhen: "Tick this after the evidence says what ran, on what build/device/surface, and whether it passed or failed.",
+        },
+      ],
+    },
+  ];
+
+  return {
+    ...input,
+    fields,
+    workRecipe,
+    proofRecipe,
+    humanTestPlan,
+    recommendedAction: getRecommendedAction({
+      issueKey: input.issueKey,
+      summary: input.summary,
+      stage: input.customFields.loopStage,
+      humanReview: input.customFields.humanFinalReview,
+      verificationSurface: input.customFields.verificationSurface,
+      verifiedBuildOrCommit: input.customFields.verifiedBuildOrCommit,
+    }, workRecipe, proofRecipe, hasAcceptance),
+    checklistSections,
+    commentTemplates: buildCommentTemplates(input, workRecipe, proofRecipe, humanTestPlan),
+    codingAgentPrompt: buildCodingAgentPrompt(input, workRecipe, proofRecipe, humanTestPlan),
+  };
+}
+
+export function getRecommendedAction(input: {
+  issueKey: string;
+  summary: string;
+  stage: string;
+  humanReview: string;
+  verificationSurface: string;
+  verifiedBuildOrCommit: string;
+}, workRecipe?: WorkRecipeViewModel, proofRecipe?: ProofRecipeViewModel, hasAcceptance = false): RecommendedAction {
+  const stage = input.stage.toLowerCase();
+  const review = input.humanReview.toLowerCase();
+  const summaryLower = input.summary.toLowerCase();
+  const domainHint = workRecipe?.kind || (summaryLower.includes("auth") || summaryLower.includes("token")
+    ? "auth-token lifecycle"
+    : "requested behavior");
+  const proofMissing = proofRecipe?.missingCount || 0;
+  const surfaceText = input.verificationSurface || "Automated, Simulator, or real-device evidence";
+
+  if (!input.stage || stage.includes("selected") || stage.includes("repro")) {
+    return {
+      title: hasAcceptance ? "Finish the proof recipe" : `Lock acceptance for ${domainHint}`,
+      body: `${input.issueKey} is still early in the MVP loop. The next move is to pin the smallest pass/fail target and required proof for ${domainHint}, then hand that locked recipe to the coding agent.`,
+      steps: [
+        `Answer the generated ${domainHint} acceptance questions in Jira.`,
+        proofMissing
+          ? `Fill ${proofMissing} missing proof detail${proofMissing === 1 ? "" : "s"} for ${surfaceText}.`
+          : `Confirm the proof recipe for ${surfaceText} is still the smallest useful proof.`,
+        "Only then start implementation on the scoped ticket.",
+      ],
+    };
+  }
+
+  if (stage.includes("accept") || stage.includes("ready")) {
+    return {
+      title: `Start the smallest ${domainHint} code pass`,
+      body: `${input.issueKey} looks ready for implementation. Keep the patch centered on the locked ${domainHint} acceptance and the generated proof recipe.`,
+      steps: [
+        `Write or run the focused failing check for ${domainHint}.`,
+        workRecipe?.guardrails[0] || "Patch only the behavior named by the ticket.",
+        "Prepare the verification evidence comment before requesting human review.",
+      ],
+    };
+  }
+
+  if (stage.includes("coding") || stage.includes("agent")) {
+    return {
+      title: "Finish evidence and build handoff",
+      body: `${input.issueKey} is in the coding lane. The next useful action is to prove the ${domainHint} fix against the generated work/testing recipe and record the build or commit that humans can verify.`,
+      steps: [
+        proofRecipe?.requirements.length
+          ? `Run the named proof steps: ${proofRecipe.requirements.map((requirement) => requirement.surface).join(", ")}.`
+          : "Run the narrow automated checks plus the strongest relevant build check.",
+        `Record ${input.verifiedBuildOrCommit || "the commit SHA or build number"} in Verified Build/Commit.`,
+        "Paste the verification evidence comment and move only to human review when the evidence is real.",
+      ],
+    };
+  }
+
+  if (stage.includes("review") || stage.includes("ci")) {
+    return {
+      title: "Review the PR against the lock",
+      body: `${input.issueKey} is in the review/CI lane. The next move is to make sure the PR references Jira, stays inside the locked acceptance, and has real checks behind it.`,
+      steps: [
+        "Confirm the PR links back to the BDEV ticket.",
+        "Compare the diff against the locked acceptance and reject unrelated cleanup.",
+        "Move forward only after CI is green or failures are proven unrelated.",
+      ],
+    };
+  }
+
+  if (stage.includes("build")) {
+    return {
+      title: "Put the verified change in a known build",
+      body: `${input.issueKey} needs a build/commit handoff before John or Tay can do final verification.`,
+      steps: [
+        `Record ${input.verifiedBuildOrCommit || "the TestFlight build, merge SHA, or exact commit"} on the ticket.`,
+        "Attach the PR/build link in Jira.",
+        "Do not close until the named verification surface has been checked.",
+      ],
+    };
+  }
+
+  if (stage.includes("failed") || review.includes("failed")) {
+    return {
+      title: "Reopen from the failed evidence",
+      body: `${input.issueKey} has failed verification. The next pass should start from the exact failed evidence, not a fresh broad fix.`,
+      steps: [
+        "Copy the failed human/automated evidence into the acceptance thread.",
+        "Link any blocker or child issue that explains the failure.",
+        "Move back to the earliest loop stage that matches the failure.",
+      ],
+    };
+  }
+
+  if (stage.includes("human") || review.includes("ready")) {
+    if (workRecipe?.proofAuthority.agentMayClaimDone) {
+      return {
+        title: "Review the agent proof package",
+        body: `${input.issueKey} can be fully proven by the agent because the required surfaces are automated/simulator checks. John/Tay should verify the evidence package, not redo real-phone testing.`,
+        steps: [
+          `Confirm every named proof step passed: ${proofRecipe?.requirements.map((requirement) => requirement.surface).join(", ") || surfaceText}.`,
+          "Check the agent included command output, simulator result, build/commit, and no unrelated scope changes.",
+          "If the proof is complete, Human Final Review can pass from evidence review.",
+        ],
+      };
+    }
+
+    return {
+      title: "Run human final review",
+      body: `${input.issueKey} is waiting on final verification for ${domainHint}. Do not mark Done until the required surface evidence is on Jira.`,
+      steps: [
+        `Verify on ${surfaceText}.`,
+        "Post pass/fail evidence with device, build, account, and timestamp details.",
+        "Set Human Final Review to Passed only with evidence already present.",
+      ],
+    };
+  }
+
+  if (review.includes("passed")) {
+    return {
+      title: "Close with evidence attached",
+      body: `${input.issueKey} has human review marked Passed. Confirm the Jira evidence references the verified build or commit before closure.`,
+      steps: [
+        "Check the evidence comment and linked PR/build match the final field values.",
+        "Confirm no linked blocker remains open for this acceptance.",
+        "Move the ticket forward only if Jira already contains the proof.",
+      ],
+    };
+  }
+
+  return {
+    title: "Reconcile loop state",
+    body: `${input.issueKey} has a stage/review combination that needs a quick PM pass before more coding.`,
+    steps: [
+      "Compare MVP Loop Stage with Human Final Review.",
+      "Update the next owner and verification surface in Jira.",
+      "Continue the loop from the first unchecked checklist item.",
+    ],
+  };
+}
+
+export function adfToPlainText(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return compactText(value);
+
+  const parts: string[] = [];
+
+  function visit(node: unknown): void {
+    if (!node || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+
+    if (typeof record.text === "string") {
+      parts.push(record.text);
+    }
+
+    if (record.type === "hardBreak") {
+      parts.push("\n");
+    }
+
+    if (Array.isArray(record.content)) {
+      for (const child of record.content) {
+        visit(child);
+      }
+    }
+
+    if (
+      record.type === "paragraph" ||
+      record.type === "heading" ||
+      record.type === "listItem" ||
+      record.type === "blockquote"
+    ) {
+      parts.push("\n");
+    }
+  }
+
+  visit(value);
+  return compactText(parts.join(""));
+}
+
+function fieldDisplay(label: string, fieldId: string, value: string): FieldDisplay {
+  const normalized = value || "Not set";
+  return {
+    label,
+    fieldId,
+    value: normalized,
+    empty: !value,
+  };
+}
+
+function buildWorkRecipeViewModel(input: ChecklistInput, evidenceText: string): WorkRecipeViewModel {
+  const config = findWorkKindConfig(input, evidenceText);
+  const surfaceConfigs = parseSurfaceRequirements(input.customFields.verificationSurface);
+  const issueSignals = buildIssueSignals(input, evidenceText, surfaceConfigs);
+  const surfaceCards = buildSurfaceCards(surfaceConfigs);
+  const proofAuthority = buildProofAuthority(surfaceCards);
+  const aiOperatingModel = buildAiOperatingModel(input, evidenceText, config.label, proofAuthority);
+  const needsHumanDevice = surfaceCards.some((card) => card.needsHumanDevice);
+  const testingPosture = needsHumanDevice
+    ? "Simulator and automated checks can prepare this ticket, but final pass needs the named real-device surface."
+    : proofAuthority.agentMayClaimDone
+      ? "The agent can fully verify this ticket with automated/simulator proof, then present the proof package for John/Tay review."
+      : surfaceConfigs.length
+        ? proofAuthority.summary
+      : "Set Verification Surface in Jira before dispatching code so the checklist can generate the right proof path.";
+
+  return {
+    kind: config.label,
+    source: config.id === "general"
+      ? "Generated from the issue summary because MVP Track did not match a specialized recipe."
+      : `Generated from ${input.customFields.mvpTrack || "the issue summary"} and the ticket text.`,
+    risk: config.risk,
+    testingPosture,
+    proofAuthority,
+    aiOperatingModel,
+    issueSignals,
+    acceptanceQuestions: [...config.acceptanceQuestions],
+    reproduceSteps: [...config.reproduceSteps],
+    guardrails: [...config.guardrails],
+    closeoutEvidence: [...config.closeoutEvidence],
+    outOfScope: [...config.outOfScope],
+    surfaceCards,
+  };
+}
+
+function findWorkKindConfig(input: ChecklistInput, evidenceText: string) {
+  const trackMatch = input.customFields.mvpTrack
+    ? WORK_KIND_CONFIGS.find((config) => config.match.test(input.customFields.mvpTrack))
+    : undefined;
+  if (trackMatch) return trackMatch;
+
+  const searchText = [
+    input.summary,
+    input.descriptionText,
+    evidenceText,
+  ].join("\n");
+
+  return (
+    WORK_KIND_CONFIGS.find((config) => config.match.test(searchText)) || {
+      id: "general",
+      label: input.customFields.mvpTrack || "General Stabilization",
+      risk: "This ticket still needs a narrow acceptance lock so the agent does not drift into adjacent fixes.",
+      acceptanceQuestions: [
+        "What is the smallest user-visible behavior that must pass?",
+        "What exact regression or missing behavior counts as fail?",
+        "Which related systems are explicitly out of scope for this ticket?",
+      ],
+      reproduceSteps: [
+        "Name the build, account, and starting state.",
+        "Run the shortest repro path from the ticket.",
+        "Record expected result, actual result, and the log/screenshot evidence needed.",
+      ],
+      guardrails: [
+        "Keep the patch scoped to the locked acceptance.",
+        "Prefer one focused failing check over broad cleanup.",
+        "Link blockers instead of expanding the ticket mid-fix.",
+      ],
+      closeoutEvidence: [
+        "Record build or commit.",
+        "Record the exact verification surface used.",
+        "Paste pass/fail evidence before Human Final Review moves to Passed.",
+      ],
+      outOfScope: ["unrelated cleanup", "polish", "adjacent feature fixes not named by acceptance"],
+    }
+  );
+}
+
+function buildIssueSignals(
+  input: ChecklistInput,
+  evidenceText: string,
+  surfaceConfigs: SurfaceConfig[],
+): string[] {
+  const signals = [
+    input.customFields.mvpTrack ? `Track: ${input.customFields.mvpTrack}` : "Track missing",
+    input.customFields.loopStage ? `Loop stage: ${input.customFields.loopStage}` : "Loop stage missing",
+    surfaceConfigs.length
+      ? `Surfaces: ${surfaceConfigs.map((surface) => surface.label).join(", ")}`
+      : "Verification Surface missing",
+  ];
+
+  if (/acceptance|done when|pass\/fail|pass-fail/i.test(evidenceText)) {
+    signals.push("Acceptance language found");
+  } else {
+    signals.push("Acceptance still needs locking");
+  }
+
+  if (input.links.length || input.parent) {
+    signals.push(`${input.links.length + (input.parent ? 1 : 0)} linked issue signal${input.links.length + (input.parent ? 1 : 0) === 1 ? "" : "s"}`);
+  } else {
+    signals.push("No parent/link signal returned");
+  }
+
+  return signals;
+}
+
+function buildSurfaceCards(surfaceConfigs: SurfaceConfig[]): WorkSurfaceCard[] {
+  if (!surfaceConfigs.length) {
+    return [
+      {
+        label: "Verification Surface missing",
+        active: false,
+        detail: "Set this Jira field first. Without it, the page cannot know whether simulator is enough or real phones are mandatory.",
+        requiredBecause: "Jira field is empty",
+        needsHumanDevice: false,
+        agentVerifiable: false,
+      },
+    ];
+  }
+
+  return surfaceConfigs.map((surface) => ({
+    label: surface.label,
+    active: true,
+    detail: surfaceDetail(surface.id),
+    requiredBecause: `Verification Surface includes ${surface.label}`,
+    needsHumanDevice: /one-phone|two-phones|testflight-apns|ble/.test(surface.id),
+    agentVerifiable: /automated|simulator|worker-smoke/.test(surface.id),
+  }));
+}
+
+function buildProofAuthority(surfaceCards: WorkSurfaceCard[]): ProofAuthorityViewModel {
+  const activeCards = surfaceCards.filter((card) => card.active);
+  const proofRequired = activeCards.map((card) => card.label);
+  const needsRealPhone = activeCards.some((card) => card.needsHumanDevice);
+  const needsExternalWatch = activeCards.some((card) => /Sentry Watch/i.test(card.label));
+  const allAgentVerifiable = activeCards.length > 0 && activeCards.every((card) => card.agentVerifiable);
+
+  if (!activeCards.length) {
+    return {
+      level: "needs-surface",
+      label: "Set verification surface first",
+      summary: "The ticket cannot say who can prove it done until Jira names Automated, Simulator, or real-phone surfaces.",
+      agentMayClaimDone: false,
+      agentDoneLanguage: "Agent may not claim done yet.",
+      humanVerificationLanguage: "John/Tay should first set Verification Surface on the Jira ticket.",
+      proofRequired: [],
+    };
+  }
+
+  if (needsRealPhone) {
+    return {
+      level: "human-real-phone-required",
+      label: "Real phone required",
+      summary: "The agent can prepare code and automated/simulator evidence, but final done requires John/Tay on the named physical-device surface.",
+      agentMayClaimDone: false,
+      agentDoneLanguage: "Agent may claim code-ready with prep evidence, not 100% done.",
+      humanVerificationLanguage: "John/Tay must run the real-phone/TestFlight/APNs/BLE check before final pass.",
+      proofRequired,
+    };
+  }
+
+  if (needsExternalWatch && !allAgentVerifiable) {
+    return {
+      level: "human-external-watch-required",
+      label: "External watch required",
+      summary: "The agent can prepare the fix and proof package, but the final result depends on a Sentry/release watch outside local tests.",
+      agentMayClaimDone: false,
+      agentDoneLanguage: "Agent may claim code-ready with local proof, not 100% done.",
+      humanVerificationLanguage: "John/Tay must review the external watch result before final pass.",
+      proofRequired,
+    };
+  }
+
+  if (allAgentVerifiable) {
+    return {
+      level: "agent-can-confirm",
+      label: "Agent can confirm done",
+      summary: "The required surfaces are automated/simulator/worker checks. The agent can prove the fix is complete and present the evidence for John/Tay review.",
+      agentMayClaimDone: true,
+      agentDoneLanguage: "Agent may claim 100% done after all named proof steps pass and evidence is attached.",
+      humanVerificationLanguage: "John/Tay verify the proof package rather than rerunning real-phone checks.",
+      proofRequired,
+    };
+  }
+
+  return {
+    level: "human-external-watch-required",
+    label: "Human verification required",
+    summary: "At least one required surface is not agent-verifiable from automated/simulator checks.",
+    agentMayClaimDone: false,
+    agentDoneLanguage: "Agent may claim code-ready with evidence, not 100% done.",
+    humanVerificationLanguage: "John/Tay must run or review the non-agent-verifiable proof.",
+    proofRequired,
+  };
+}
+
+function buildAiOperatingModel(
+  input: ChecklistInput,
+  evidenceText: string,
+  workKind: string,
+  proofAuthority: ProofAuthorityViewModel,
+): AiOperatingModelViewModel {
+  const stage = input.customFields.loopStage.toLowerCase();
+  const hasAcceptance = /acceptance|done when|pass\/fail|pass-fail/i.test(evidenceText);
+  const hasRepro = /repro|steps to reproduce|actual result|expected result|device|simulator|build/i.test(evidenceText);
+  const hasVerticalSlice = /vertical slice|traceable bullet|thin slice|end-to-end|smallest.*slice|one ticket/i.test(evidenceText);
+  const hasTdd = /tdd|red green|red-green|failing test|test first|confirmed red/i.test(evidenceText);
+  const hasFreshReview = /fresh context|fresh-context|review agent|automated review|code review|separate reviewer/i.test(evidenceText);
+  const hasModuleBoundary = /deep module|module boundary|service boundary|test boundary|public interface/i.test(evidenceText);
+  const hasDocPolicy = /doc rot|stale doc|close issue|jira source of truth|do not keep stale/i.test(evidenceText);
+  const readyForAfk = hasAcceptance && hasRepro && input.customFields.verificationSurface;
+  const mode = !readyForAfk
+    ? "human-alignment"
+    : proofAuthority.agentMayClaimDone || stage.includes("coding") || stage.includes("review") || stage.includes("ci")
+      ? "agent-afk"
+      : "human-verification";
+
+  const label = mode === "human-alignment"
+    ? "Human-in-loop alignment"
+    : mode === "agent-afk"
+      ? "Agent AFK implementation"
+      : "Human verification gate";
+
+  const summary = mode === "human-alignment"
+    ? "Keep John/Tay in the loop until acceptance, repro, and proof surface are locked. Do not send an agent into broad discovery yet."
+    : mode === "agent-afk"
+      ? "This ticket is shaped enough for a small agent pass. The agent should stay in the smart zone, implement one traceable slice, and return proof."
+      : "The agent can prepare evidence, but the final pass depends on human/device/external verification.";
+
+  const smartZoneRule = "Keep the agent task small enough for one clean context: one BDEV ticket, one locked acceptance, one proof recipe, no broad cleanup.";
+  const handoffRule = mode === "agent-afk"
+    ? "Dispatch only the current BDEV ticket plus the generated agent prompt. Avoid stuffing old transcripts or stale plans into context."
+    : "Do not dispatch implementation yet; first turn the missing checklist items into Jira evidence or a proof recipe comment.";
+
+  return {
+    mode,
+    label,
+    summary,
+    smartZoneRule,
+    handoffRule,
+    promptRules: [
+      smartZoneRule,
+      "Prefer a vertical slice/traceable bullet: the smallest end-to-end behavior that gives feedback.",
+      "Use TDD where possible: write or identify the failing check first, confirm red, then make it green.",
+      "After implementation, review in a fresh context or with a separate reviewer rather than asking the same saturated context to judge itself.",
+      "Keep durable truth in Jira fields/comments; avoid stale local planning docs becoming hidden source of truth.",
+      "Protect deep module boundaries: test through stable public/service interfaces instead of wrapping tiny internals with brittle mocks.",
+    ],
+    checklist: [
+      {
+        label: "Is this one smart-zone-sized ticket?",
+        checked: Boolean(input.issueKey) && !/everything|all issues|entire app|whole system/i.test(input.summary),
+        detail: `Scope should stay at ${input.issueKey}: ${input.summary || workKind}.`,
+        tickWhen: "Tick when this is one bounded BDEV ticket, not an 'AI fix everything' bundle.",
+        source: "Smart zone task sizing",
+      },
+      {
+        label: "Has human alignment happened before AFK work?",
+        checked: hasAcceptance && hasRepro,
+        detail: hasAcceptance && hasRepro
+          ? "Acceptance and repro evidence found."
+          : "Missing acceptance and/or repro evidence. Keep this human-in-loop.",
+        tickWhen: "Tick when Jira contains locked acceptance plus repro/build/account context.",
+        source: "Human-in-loop before AFK",
+      },
+      {
+        label: "Is this framed as a vertical slice/traceable bullet?",
+        checked: hasVerticalSlice,
+        detail: hasVerticalSlice
+          ? "Vertical-slice language found."
+          : "Name the smallest end-to-end behavior that proves progress, not a horizontal layer-only task.",
+        tickWhen: "Tick when Jira says what visible/API/device behavior will work at the end of this ticket.",
+        source: "Traceable bullets",
+      },
+      {
+        label: "Is there a TDD or failing-check plan?",
+        checked: hasTdd || proofAuthority.proofRequired.some((proof) => /Automated|Simulator|Worker/i.test(proof)),
+        detail: "Agent should confirm a failing or targeted check before claiming implementation proof.",
+        tickWhen: "Tick when the proof recipe names the failing test, simulator scenario, or smoke check to run first.",
+        source: "Red-green feedback loop",
+      },
+      {
+        label: "Will review happen outside the implementation context?",
+        checked: hasFreshReview,
+        detail: hasFreshReview
+          ? "Fresh-review language found."
+          : "Ask for fresh-context review or separate reviewer after the agent patch.",
+        tickWhen: "Tick when Jira/agent handoff requires a separate review pass after implementation.",
+        source: "Fresh context review",
+      },
+      {
+        label: "Are module/test boundaries explicit?",
+        checked: hasModuleBoundary,
+        detail: hasModuleBoundary
+          ? "Module/test-boundary language found."
+          : "Name the service/module boundary or public interface the agent should test through.",
+        tickWhen: "Tick when the handoff says which deep module/service/API boundary owns the behavior.",
+        source: "Deep modules",
+      },
+      {
+        label: "Will Jira remain the durable source of truth?",
+        checked: hasDocPolicy || /jira/i.test(evidenceText),
+        detail: "Keep proof and decisions in Jira fields/comments so old local docs do not rot into misleading context.",
+        tickWhen: "Tick when the agent is told to put evidence back in Jira and avoid relying on stale local planning files.",
+        source: "Doc rot prevention",
+      },
+    ],
+  };
+}
+
+function surfaceDetail(id: string): string {
+  switch (id) {
+    case "automated":
+      return "Use this for deterministic regression locks: unit tests, fixtures, Swift package tests, worker tests, or parser/state checks.";
+    case "simulator":
+      return "Use this for UI state, routing, local notifications, cold launch, and flows that do not require APNs or BLE radios.";
+    case "one-phone":
+      return "Use this when device state, build install, account state, or foreground/background behavior matters on one physical phone.";
+    case "two-phones":
+      return "Use this for sender/receiver, friend symmetry, offline delivery, and cross-account behavior that one device cannot prove.";
+    case "testflight-apns":
+      return "Use this for real push delivery, notification receipt, badge changes, and tap routing through TestFlight/APNs.";
+    case "ble":
+      return "Use this for raw mesh peers, accepted-friend nearby count, Bluetooth identity matching, and stale-peer cleanup.";
+    case "worker-smoke":
+      return "Use this for backend/API smoke proof: exact endpoint/request, response, and server-side log or status evidence.";
+    case "sentry-watch":
+      return "Use this for production-noise proof: release/build, issue group/query, watch window, and pass condition.";
+    default:
+      return "Use the proof recipe to name the exact command, scenario, or device evidence required.";
+  }
+}
+
+function buildProofRecipeViewModel(input: ChecklistInput, evidenceText: string): ProofRecipeViewModel {
+  const structuredRecipe = extractProofRecipeBlock(evidenceText);
+  const searchText = structuredRecipe || evidenceText;
+  const surfaceRequirements = parseSurfaceRequirements(input.customFields.verificationSurface);
+  const requirements: ProofRecipeRequirement[] = surfaceRequirements.map((config) => {
+    const detail = findRequirementDetail(config.label, config.aliases, searchText);
+    const hasConcreteProof = Boolean(detail);
+
+    return {
+      id: config.id,
+      label: config.checklistLabel,
+      surface: config.label,
+      requiredBecause: `Verification Surface includes ${config.label}`,
+      hasConcreteProof,
+      detail: hasConcreteProof ? `Recipe/detail found: ${detail}` : config.missingDetail,
+      tickWhen: config.tickWhen,
+      templateLines: [...config.template],
+    };
+  });
+
+  for (const hint of TRACK_PROOF_HINTS) {
+    const applies = hint.match.test(input.customFields.mvpTrack) || hint.match.test(input.summary);
+    if (!applies) continue;
+
+    const detail = findRequirementDetail(hint.label, [hint.match], searchText);
+    requirements.push({
+      id: hint.id,
+      label: hint.label,
+      surface: "Track-specific",
+      requiredBecause: `MVP Track is ${input.customFields.mvpTrack || "inferred from summary"}`,
+      hasConcreteProof: Boolean(detail),
+      detail: detail ? `Track proof detail found: ${detail}` : hint.missingDetail,
+      tickWhen: hint.tickWhen,
+      templateLines: [...hint.template],
+    });
+  }
+
+  const uniqueRequirements = dedupeRequirements(requirements);
+
+  return {
+    foundStructuredRecipe: Boolean(structuredRecipe),
+    source: structuredRecipe
+      ? "Structured MVP proof recipe found in Jira description/comments."
+      : "Generated from MVP Track and Verification Surface. Add a proof recipe comment to make it precise.",
+    requiredSurfaces: uniqueRequirements.map((requirement) => requirement.surface),
+    requirements: uniqueRequirements,
+    missingCount: uniqueRequirements.filter((requirement) => !requirement.hasConcreteProof).length,
+    template: buildProofRecipeTemplate(input, uniqueRequirements),
+  };
+}
+
+function parseSurfaceRequirements(value: string): SurfaceConfig[] {
+  const normalized = compactText(value);
+  if (!normalized) return [];
+
+  const candidates = normalized.split(",").map((item) => item.trim()).filter(Boolean);
+  const configs: SurfaceConfig[] = [];
+
+  for (const candidate of candidates.length ? candidates : [normalized]) {
+    const config = SURFACE_CONFIGS.find(
+      (surface) => surface.label.toLowerCase() === candidate.toLowerCase() || surface.aliases.some((alias) => alias.test(candidate)),
+    );
+
+    if (config) configs.push(config);
+  }
+
+  for (const config of SURFACE_CONFIGS) {
+    if (config.aliases.some((alias) => alias.test(normalized))) configs.push(config);
+  }
+
+  return dedupeSurfaceConfigs(configs);
+}
+
+function dedupeSurfaceConfigs(configs: SurfaceConfig[]): SurfaceConfig[] {
+  const seen = new Set<string>();
+  return configs.filter((config) => {
+    if (seen.has(config.id)) return false;
+    seen.add(config.id);
+    return true;
+  });
+}
+
+function dedupeRequirements(requirements: ProofRecipeRequirement[]): ProofRecipeRequirement[] {
+  const seen = new Set<string>();
+  return requirements.filter((requirement) => {
+    if (seen.has(requirement.id)) return false;
+    seen.add(requirement.id);
+    return true;
+  });
+}
+
+function extractProofRecipeBlock(value: string): string {
+  const lines = value.split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => /mvp proof recipe|proof recipe|required proof steps/i.test(line));
+
+  if (startIndex === -1) return "";
+
+  const collected: string[] = [];
+
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    if (index > startIndex && /^#{1,6}\s+\S|^[A-Z][A-Za-z /-]{2,}:$/.test(line.trim()) && !isKnownProofHeading(line)) {
+      break;
+    }
+    collected.push(line);
+  }
+
+  return compactText(collected.join("\n"));
+}
+
+function isKnownProofHeading(value: string): boolean {
+  const line = value.trim();
+  return SURFACE_CONFIGS.some((config) => config.aliases.some((alias) => alias.test(line))) || /acceptance|required proof|out of scope/i.test(line);
+}
+
+function findRequirementDetail(label: string, aliases: readonly RegExp[], value: string): string {
+  const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const matches = aliases.some((alias) => alias.test(line)) || line.toLowerCase().startsWith(label.toLowerCase());
+    if (!matches) continue;
+
+    const afterColon = line.includes(":") ? compactText(line.slice(line.indexOf(":") + 1)) : "";
+    if (isConcreteProofDetail(afterColon)) return afterColon;
+
+    const following = collectFollowingProofLines(lines, index + 1);
+    if (isConcreteProofDetail(following)) return following;
+
+    if (isConcreteProofDetail(line) && !isSurfaceOnlyLine(line)) return line;
+  }
+
+  return "";
+}
+
+function collectFollowingProofLines(lines: string[], startIndex: number): string {
+  const collected: string[] = [];
+
+  for (let index = startIndex; index < lines.length && collected.length < 5; index += 1) {
+    const line = lines[index];
+    if (isKnownProofHeading(line) && collected.length > 0) break;
+    if (isSurfaceOnlyLine(line)) break;
+    collected.push(line.replace(/^[-*]\s*/, ""));
+  }
+
+  return compactText(collected.join("\n"));
+}
+
+function isSurfaceOnlyLine(value: string): boolean {
+  const normalized = value.replace(/^[-*]\s*/, "").replace(/:$/, "").trim().toLowerCase();
+  return SURFACE_CONFIGS.some((config) => config.label.toLowerCase() === normalized);
+}
+
+function isConcreteProofDetail(value: string): boolean {
+  const withoutPlaceholders = value.replace(/\[[^\]]+\]/g, "").trim();
+  if (withoutPlaceholders.length < 10) return false;
+  if (isSurfaceOnlyLine(withoutPlaceholders)) return false;
+
+  return /command|xcode|swift|npm|test|fixture|scenario|device|account|build|endpoint|request|expected|result|sentry|release|window|\/v\d|APPLE|phone|simulator|apns|ble|retry|auth|message|badge|peer/i.test(
+    withoutPlaceholders,
+  );
+}
+
+function hasQuestionEvidence(question: string, evidenceText: string): boolean {
+  const normalizedEvidence = evidenceText.toLowerCase();
+  const keywords = question
+    .toLowerCase()
+    .replace(/[^a-z0-9/ -]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 4 && !["which", "being", "after", "should", "exact", "record", "ticket", "state"].includes(word));
+
+  if (!keywords.length) return false;
+
+  const matchCount = keywords.filter((word) => normalizedEvidence.includes(word)).length;
+  return matchCount >= Math.min(2, keywords.length);
+}
+
+function buildProofRecipeTemplate(input: ChecklistInput, requirements: ProofRecipeRequirement[]): string {
+  const requirementLines = requirements.length
+    ? requirements.flatMap((requirement) => requirement.templateLines)
+    : [
+        "Automated / Simulator / Device:",
+        "- Proof step: [exact command, scenario, or device check]",
+        "- Expected result: [what proves pass/fail]",
+      ];
+
+  return [
+    `${input.issueKey} MVP proof recipe`,
+    "",
+    `Ticket: ${input.issueUrl}`,
+    `Track: ${input.customFields.mvpTrack || "[set MVP Track]"}`,
+    `Verification Surface: ${input.customFields.verificationSurface || "[set Verification Surface]"}`,
+    "",
+    "Acceptance:",
+    "- Pass: [smallest concrete pass condition]",
+    "- Fail: [specific regression or missing behavior]",
+    "",
+    "Required proof steps:",
+    ...requirementLines,
+    "",
+    "Out of scope:",
+    "- [anything the agent must not touch]",
+  ].join("\n");
+}
+
+function buildHumanTestPlanViewModel(
+  input: ChecklistInput,
+  workRecipe: WorkRecipeViewModel,
+  proofRecipe: ProofRecipeViewModel,
+): HumanTestPlanViewModel {
+  const agentUpdate = extractAgentTestUpdate(input.comments);
+  const canAgentFinishAlone = workRecipe.proofAuthority.agentMayClaimDone;
+  const surfaceText = input.customFields.verificationSurface || "the surfaces named on this ticket";
+  const buildOrCommit = agentUpdate.buildOrCommit || input.customFields.verifiedBuildOrCommit;
+  const agentHasPassed = agentUpdate.status === "passed";
+  const agentFailed = agentUpdate.status === "failed";
+  const needsHumanDevice = workRecipe.surfaceCards.some((card) => card.needsHumanDevice);
+  const proofGapText = proofRecipe.missingCount
+    ? `${proofRecipe.missingCount} proof detail${proofRecipe.missingCount === 1 ? "" : "s"} still need to be made concrete.`
+    : "The required proof details are present.";
+
+  const agentStatusLabel = agentUpdate.found
+    ? agentFailed
+      ? "Agent says testing failed"
+      : agentHasPassed
+        ? "Agent says its checks passed"
+        : "Agent update found, but not passed yet"
+    : "No agent test update found yet";
+
+  const humanStatusLabel = canAgentFinishAlone
+    ? agentHasPassed
+      ? "John/Tay review the proof package"
+      : "Wait for agent proof before signing off"
+    : needsHumanDevice
+      ? "John/Tay still need to test a real build/device"
+      : "John/Tay need to review the non-local proof";
+
+  const steps: HumanTestStep[] = [
+    {
+      title: "Check what the agent already proved",
+      owner: "John/Tay",
+      surface: "Jira evidence",
+      doThis: agentUpdate.found
+        ? `Read the latest Agent Test Update from ${agentUpdate.source?.author || "the agent"}. Build/commit says: ${buildOrCommit || "not filled in yet"}.`
+        : "Ask the coding agent to paste the Agent Test Update comment template into Jira before you do final review.",
+      passMeans: agentHasPassed
+        ? "The update says the agent checks passed and includes real commands, simulator notes, logs, or screenshots."
+        : "The update clearly says which agent checks passed, failed, or were not required.",
+      failMeans: "There is no agent update, the update has placeholders, or it says a required automated/simulator/worker check failed.",
+    },
+  ];
+
+  if (canAgentFinishAlone) {
+    steps.push({
+      title: "Review the proof instead of re-testing phones",
+      owner: "John/Tay",
+      surface: surfaceText,
+      doThis: "Open the PR/Jira evidence and confirm every required automated or simulator check is listed as passed with the exact command/scenario and build or commit.",
+      passMeans: "The proof covers every required surface, the build/commit is exact, and no real-phone surface is required.",
+      failMeans: "A required proof step is missing, failed, vague, or depends on real APNs/BLE/phone behavior.",
+    });
+  } else {
+    steps.push({
+      title: "Confirm the exact build or commit you are testing",
+      owner: "John/Tay",
+      surface: "Build handoff",
+      doThis: buildOrCommit
+        ? `Use ${buildOrCommit}. If your installed app is not that build/commit, stop and install the right build first.`
+        : "Do not start final verification yet. Ask the agent/merger to fill Verified Build/Commit or include it in the Agent Test Update.",
+      passMeans: "The app/build in your hand matches the Jira field or Agent Test Update exactly.",
+      failMeans: "You cannot tell what build contains the fix, or your phone is on a different build.",
+    });
+
+    steps.push(buildHumanDeviceStep(input, workRecipe, surfaceText));
+  }
+
+  steps.push({
+    title: "Write one clear PASS or FAIL back to Jira",
+    owner: "John/Tay",
+    surface: "Jira final evidence",
+    doThis: canAgentFinishAlone
+      ? "If the proof package is complete, comment that evidence review passed. If not, comment exactly what is missing and leave Human Final Review as Failed or Not Ready."
+      : "After the real-device/external check, paste the result into Jira with device, account, build, time, and what you saw.",
+    passMeans: canAgentFinishAlone
+      ? "Human Final Review can be Passed from evidence review because the agent-verifiable proof is complete."
+      : "Human Final Review can be Passed only after your real-device/external evidence is on the ticket.",
+    failMeans: "Set Human Final Review to Failed, set MVP Loop Stage to Failed/Reopened, and say exactly which step failed.",
+  });
+
+  return {
+    title: `${input.issueKey} human test plan`,
+    summary: canAgentFinishAlone
+      ? `This ticket can be signed off from agent proof because Jira only asks for ${surfaceText}. ${proofGapText}`
+      : `The agent can prepare this ticket, but John/Tay still need final verification for ${surfaceText}. ${proofGapText}`,
+    canAgentFinishAlone,
+    agentStatusLabel,
+    humanStatusLabel,
+    agentUpdate,
+    dashboardUpdateRule:
+      "This dashboard is read from Jira. Agents update it by adding the Agent Test Update comment, setting MVP Loop Stage, setting Human Final Review, and filling Verified Build/Commit.",
+    steps,
+  };
+}
+
+function buildHumanDeviceStep(
+  input: ChecklistInput,
+  workRecipe: WorkRecipeViewModel,
+  surfaceText: string,
+): HumanTestStep {
+  const kind = workRecipe.kind.toLowerCase();
+  const base = {
+    owner: "John/Tay" as const,
+    surface: surfaceText,
+  };
+
+  if (kind.includes("auth")) {
+    return {
+      ...base,
+      title: "Run the auth fallback check on the phone",
+      doThis:
+        "On the named build/account, reproduce the JWT timeout/offline fallback path from the ticket. Keep the app open long enough to see whether alerts or retries calm down.",
+      passMeans:
+        "The app stays usable, the fallback alert/severity is appropriate, retries/backoff do not spam, and the auth state recovers or fails clearly.",
+      failMeans: "Repeated alerts, retry storms, stuck login/auth state, unexpected logout, silent failure, or no clear recovery.",
+    };
+  }
+
+  if (kind.includes("friendship")) {
+    return {
+      ...base,
+      title: "Run the friend request/accept check on the required accounts",
+      doThis:
+        "Use the requester and recipient accounts from Jira. Send or accept the request exactly once, then relaunch if Jira says relaunch matters.",
+      passMeans: "Both accounts show the same friendship state and no duplicate or missing request remains.",
+      failMeans: "Only one side sees the friend, the request reappears, duplicates show, or relaunch loses the accepted state.",
+    };
+  }
+
+  if (kind.includes("chat list")) {
+    return {
+      ...base,
+      title: "Check the chat list on the affected account",
+      doThis:
+        "Open the chat tab from a fresh launch for the account named in Jira. If symmetry is in scope, check both accounts after friendship/message state is present.",
+      passMeans: "The expected chat row appears on the right account(s) and survives refresh/relaunch if required.",
+      failMeans: "The row is missing, appears only on one side when both are required, or disappears after relaunch.",
+    };
+  }
+
+  if (kind.includes("text dm")) {
+    return {
+      ...base,
+      title: "Send the smallest text message through the failing path",
+      doThis:
+        "Use the sender/receiver accounts from Jira. Put the receiver in the required state, send one plain text message, then open/relaunch as the ticket requires.",
+      passMeans: "The receiver gets the message, unread/chat state updates correctly, and no retry/failure banner remains.",
+      failMeans: "The notification arrives but message does not, the bubble is missing, unread state is wrong, or retry/fallback never clears.",
+    };
+  }
+
+  if (kind.includes("push") || kind.includes("badge")) {
+    return {
+      ...base,
+      title: "Check the notification or badge behavior on the target build",
+      doThis:
+        "Put the app in the required state, trigger the named notification, then check receipt, badge count, and tap destination.",
+      passMeans: "The notification arrives when required, badge count is correct, and tapping opens the exact target screen.",
+      failMeans: "No notification, wrong badge, stale badge, wrong screen after tap, or success only in foreground when background/TestFlight is required.",
+    };
+  }
+
+  if (kind.includes("nearby") || kind.includes("ble")) {
+    return {
+      ...base,
+      title: "Check Nearby/BLE on real phones",
+      doThis:
+        "Put the named devices/accounts near each other. Record raw mesh peer count separately from accepted-friend nearby count, then relaunch if Jira says stale peers matter.",
+      passMeans: "Accepted friends appear as nearby, raw peer count makes sense, identities match the right accounts, and relaunch does not create ghosts.",
+      failMeans: "Friend count stays zero, raw peer counts disagree unexpectedly, identity is wrong, or ghosts remain after relaunch.",
+    };
+  }
+
+  return {
+    ...base,
+    title: `Run the ${workRecipe.kind} human verification`,
+    doThis:
+      "Follow the ticket acceptance literally on the required surface. Use the exact build/account/device from Jira and record what you see.",
+    passMeans: "The smallest pass/fail target on the ticket passes on the required surface.",
+    failMeans: "The target behavior is missing, inconsistent, or only passes on a surface Jira did not approve.",
+  };
+}
+
+function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewModel {
+  const comment = comments.find((item) => /agent test update/i.test(item.text));
+
+  if (!comment) {
+    return {
+      found: false,
+      status: "unknown",
+      label: "No agent update yet",
+      buildOrCommit: "",
+      humanVerificationNeeded: null,
+      humanTestRequested: "",
+      evidence: [],
+      surfaceResults: {
+        automated: "Not reported",
+        simulator: "Not reported",
+        workerSmoke: "Not reported",
+      },
+    };
+  }
+
+  const statusText = readLabeledValue(comment.text, "Agent testing");
+  const status = parseAgentStatus(statusText);
+  const humanNeededText = readLabeledValue(comment.text, "Human verification needed");
+  const humanVerificationNeeded = humanNeededText
+    ? /yes|required|true/i.test(humanNeededText)
+      ? true
+      : /no|false|not required/i.test(humanNeededText)
+        ? false
+        : null
+    : null;
+
+  return {
+    found: true,
+    status,
+    label: status === "passed" ? "Agent checks passed" : status === "failed" ? "Agent checks failed" : "Agent update found",
+    buildOrCommit: readLabeledValue(comment.text, "Build/commit"),
+    humanVerificationNeeded,
+    humanTestRequested: readIndentedBlock(comment.text, "Human test requested"),
+    evidence: readBulletsAfterHeading(comment.text, "Evidence"),
+    surfaceResults: {
+      automated: readLabeledValue(comment.text, "Automated") || "Not reported",
+      simulator: readLabeledValue(comment.text, "Simulator") || "Not reported",
+      workerSmoke: readLabeledValue(comment.text, "Worker smoke") || "Not reported",
+    },
+    source: {
+      author: comment.author,
+      created: comment.created,
+    },
+  };
+}
+
+function parseAgentStatus(value: string): AgentTestUpdateViewModel["status"] {
+  if (/pass/i.test(value)) return "passed";
+  if (/fail/i.test(value)) return "failed";
+  if (/not run|not-run|pending/i.test(value)) return "not-run";
+  return "unknown";
+}
+
+function readLabeledValue(text: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`^\\s*${escaped}\\s*:\\s*(.+)$`, "im"));
+  return match ? compactText(match[1]) : "";
+}
+
+function readIndentedBlock(text: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => new RegExp(`^\\s*${escaped}\\s*:`, "i").test(line));
+  if (start === -1) return "";
+
+  const sameLine = lines[start]?.split(":").slice(1).join(":").trim();
+  const collected = sameLine ? [sameLine] : [];
+
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    if (/^\s*[A-Za-z][A-Za-z /-]{2,}\s*:/.test(line) && collected.length) break;
+    if (line.trim()) collected.push(line.replace(/^\s*[-*]\s*/, "").trim());
+  }
+
+  return compactText(collected.join(" "));
+}
+
+function readBulletsAfterHeading(text: string, label: string): string[] {
+  const block = readIndentedBlock(text, label);
+  if (!block) return [];
+  return block
+    .split(/\s+-\s+|;\s+/)
+    .map((item) => compactText(item.replace(/^[-*]\s*/, "")))
+    .filter(Boolean);
+}
+
+function buildCommentTemplates(
+  input: ChecklistInput,
+  workRecipe: WorkRecipeViewModel,
+  proofRecipe: ProofRecipeViewModel,
+  humanTestPlan: HumanTestPlanViewModel,
+): CommentTemplate[] {
+  return [
+    {
+      id: "agent-test-update",
+      title: `${workRecipe.kind} Agent Test Update`,
+      audience: "agent",
+      body: [
+        `${input.issueKey} agent test update`,
+        "",
+        "Agent testing: [Passed / Failed / Not run]",
+        "Automated: [Passed / Failed / Not required]",
+        "Simulator: [Passed / Failed / Not required]",
+        "Worker smoke: [Passed / Failed / Not required]",
+        "Build/commit: [exact SHA, PR merge SHA, or build number]",
+        `Human verification needed: ${humanTestPlan.canAgentFinishAlone ? "No" : "Yes"}`,
+        "",
+        "Human test requested:",
+        `- ${humanTestPlan.steps.find((step) => step.owner === "John/Tay" && step.surface !== "Jira evidence")?.doThis || humanTestPlan.summary}`,
+        "",
+        "Evidence:",
+        "- [commands run, simulator scenario, logs, screenshots, PR/check links]",
+        "",
+        "Dashboard fields to update:",
+        "- MVP Loop Stage: Human Verifying",
+        "- Human Final Review: Ready",
+        "- Verified Build/Commit: [same exact build/commit as above]",
+      ].join("\n"),
+    },
+    {
+      id: "proof-recipe",
+      title: `${workRecipe.kind} MVP Proof Recipe`,
+      audience: "agent",
+      body: proofRecipe.template,
+    },
+    {
+      id: "repro-recipe",
+      title: `${workRecipe.kind} Repro Recipe`,
+      audience: "agent",
+      body: [
+        `${input.issueKey} ${workRecipe.kind} repro recipe`,
+        "",
+        `Ticket: ${input.issueUrl}`,
+        `Risk: ${workRecipe.risk}`,
+        `Proof authority: ${workRecipe.proofAuthority.label}`,
+        `Agent done rule: ${workRecipe.proofAuthority.agentDoneLanguage}`,
+        "",
+        "Repro setup:",
+        ...workRecipe.reproduceSteps.map((step) => `- ${step}: [fill actual value/evidence]`),
+        "",
+        "Actual result:",
+        "- [what happened]",
+        "",
+        "Expected result:",
+        "- [what should happen]",
+      ].join("\n"),
+    },
+    {
+      id: "acceptance-lock",
+      title: `${workRecipe.kind} Acceptance Lock`,
+      audience: "agent",
+      body: [
+        `${input.issueKey} acceptance lock`,
+        "",
+        `Summary: ${input.summary}`,
+        `Work recipe: ${workRecipe.kind}`,
+        `Risk: ${workRecipe.risk}`,
+        `Proof authority: ${workRecipe.proofAuthority.label}`,
+        `Agent done rule: ${workRecipe.proofAuthority.agentDoneLanguage}`,
+        `Human review rule: ${workRecipe.proofAuthority.humanVerificationLanguage}`,
+        "",
+        "Questions to answer before coding:",
+        ...workRecipe.acceptanceQuestions.map((question) => `- ${question}: [answer]`),
+        "",
+        "Pass/fail target:",
+        "- Pass: [exact user-visible behavior]",
+        "- Fail: [specific regression or missing behavior]",
+        "",
+        `Verification surface: ${input.customFields.verificationSurface || "[Automated / Simulator / TestFlight / Two Phones]"}`,
+        `Proof recipe status: ${proofRecipe.missingCount === 0 ? "Ready" : `${proofRecipe.missingCount} proof detail(s) still missing`}`,
+        "Regression boundaries:",
+        ...workRecipe.outOfScope.map((scope) => `- Out of scope: ${scope}`),
+        ...workRecipe.guardrails.map((guardrail) => `- Guardrail: ${guardrail}`),
+      ].join("\n"),
+    },
+    {
+      id: "agent-handoff",
+      title: `${workRecipe.kind} Coding Agent Handoff`,
+      audience: "agent",
+      body: [
+        `Pick up ${input.issueKey}: ${input.summary}`,
+        "",
+        `Ticket: ${input.issueUrl}`,
+        `Work recipe: ${workRecipe.kind}`,
+        `AI operating mode: ${workRecipe.aiOperatingModel.label}`,
+        `Smart-zone rule: ${workRecipe.aiOperatingModel.smartZoneRule}`,
+        `Handoff rule: ${workRecipe.aiOperatingModel.handoffRule}`,
+        `Proof authority: ${workRecipe.proofAuthority.label}`,
+        `Agent done rule: ${workRecipe.proofAuthority.agentDoneLanguage}`,
+        `MVP Loop Stage: ${input.customFields.loopStage || "[set before coding]"}`,
+        `Verification Surface: ${input.customFields.verificationSurface || "[set before coding]"}`,
+        "",
+        "Agent workflow:",
+        "1. Start from a fresh context and read the repo instructions first.",
+        "2. Work only this BDEV ticket and only the locked acceptance.",
+        "3. If acceptance/proof is missing, stop and comment what is missing instead of guessing.",
+        ...workRecipe.aiOperatingModel.promptRules.map((rule, index) => `${index + 4}. ${rule}`),
+        ...workRecipe.guardrails.map((guardrail, index) => `${index + workRecipe.aiOperatingModel.promptRules.length + 4}. ${guardrail}`),
+        `${workRecipe.guardrails.length + workRecipe.aiOperatingModel.promptRules.length + 4}. Run or add the narrowest relevant verification from the proof recipe.`,
+        `${workRecipe.guardrails.length + workRecipe.aiOperatingModel.promptRules.length + 5}. Open a PR linked to ${input.issueKey}, then stop. John/Tay merge after review.`,
+        `${workRecipe.guardrails.length + workRecipe.aiOperatingModel.promptRules.length + 6}. Paste the Agent Test Update into Jira or include it in your final message if Jira write access is unavailable.`,
+      ].join("\n"),
+    },
+    {
+      id: "ai-operating-model",
+      title: `${workRecipe.kind} AI Operating Model`,
+      audience: "agent",
+      body: [
+        `${input.issueKey} AI operating model`,
+        "",
+        `Mode: ${workRecipe.aiOperatingModel.label}`,
+        `Summary: ${workRecipe.aiOperatingModel.summary}`,
+        `Smart-zone rule: ${workRecipe.aiOperatingModel.smartZoneRule}`,
+        `Handoff rule: ${workRecipe.aiOperatingModel.handoffRule}`,
+        "",
+        "Execution rules:",
+        ...workRecipe.aiOperatingModel.promptRules.map((rule) => `- ${rule}`),
+        "",
+        "Checklist:",
+        ...workRecipe.aiOperatingModel.checklist.map((item) => `- ${item.label}: [${item.checked ? "signal present" : "needs Jira detail"}]`),
+      ].join("\n"),
+    },
+    {
+      id: "verification-evidence",
+      title: `${workRecipe.kind} Verification Evidence`,
+      audience: "human",
+      body: [
+        `${input.issueKey} verification evidence`,
+        "",
+        `Proof authority: ${workRecipe.proofAuthority.label}`,
+        `Agent claim allowed: ${workRecipe.proofAuthority.agentMayClaimDone ? "Yes, if every named proof step passed." : "No, human/external verification is still required."}`,
+        "Build/commit: [paste exact build number or commit SHA]",
+        `Surface: ${input.customFields.verificationSurface || "[Automated / Simulator / TestFlight / Two Phones / BLE / APNs]"}`,
+        "",
+        "Required evidence:",
+        ...workRecipe.closeoutEvidence.map((evidence) => `- ${evidence}: [fill actual value]`),
+        "",
+        "Result: [Passed / Failed]",
+        "Evidence:",
+        "- [command output, screenshot note, log excerpt, or repro outcome]",
+        "",
+        "Human Final Review: [Not Ready / Ready / Passed / Failed]",
+      ].join("\n"),
+    },
+  ];
+}
+
+function slugifyBranchPart(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function branchPrefixForWorkKind(kind: string): string {
+  if (/auth|text dm|push|badge|nearby|ble|relay|noise|friendship|chat list/i.test(kind)) {
+    return "fix";
+  }
+  if (/test infra|observability/i.test(kind)) {
+    return "chore";
+  }
+  return "fix";
+}
+
+function buildCodingAgentPrompt(
+  input: ChecklistInput,
+  workRecipe: WorkRecipeViewModel,
+  proofRecipe: ProofRecipeViewModel,
+  humanTestPlan: HumanTestPlanViewModel,
+): string {
+  const descriptionExcerpt = excerpt(input.descriptionText, 1200) || "No Jira description text returned.";
+  const branchName = `${branchPrefixForWorkKind(workRecipe.kind)}/${input.issueKey}-${slugifyBranchPart(input.summary || workRecipe.kind)}`;
+  const linkedIssues = [
+    input.parent ? `${input.parent.key} (${input.parent.relationship}): ${input.parent.summary || input.parent.status}` : "",
+    ...input.links.map((link) => `${link.key} (${link.relationship}, ${link.status || "unknown"}): ${link.summary}`),
+  ].filter(Boolean);
+  const requiredHumanStep =
+    humanTestPlan.steps.find((step) => step.owner === "John/Tay" && step.surface !== "Jira evidence") ||
+    humanTestPlan.steps.find((step) => step.owner === "John/Tay");
+  const agentUpdateTemplate = buildCommentTemplates(input, workRecipe, proofRecipe, humanTestPlan).find(
+    (template) => template.id === "agent-test-update",
+  )?.body;
+
+  return [
+    `Pick up ${input.issueKey}: ${input.summary}`,
+    "",
+    `Ticket: ${input.issueUrl}`,
+    `Branch: ${branchName}`,
+    `PR title: fix(${workRecipe.kind.toLowerCase().replace(/[^a-z0-9]+/g, "-")}): ${input.summary} (${input.issueKey})`,
+    "",
+    "Repository rules:",
+    "- Read the nearest AGENTS.md / CLAUDE.md before editing.",
+    "- Jira is the source of truth for MVP stabilization tickets.",
+    "- One ticket, one fix, one proof package. Do not bundle nearby bugs or polish.",
+    "- Keep scope to the locked acceptance and avoid unrelated cleanup or broad refactors.",
+    "- Do not merge your PR. John/Tay merge after review.",
+    "- Do not transition Jira to Done.",
+    "- Never print or expose tokens, cookies, API keys, env values, PII, account names, or raw private logs.",
+    "",
+    "Current Jira state:",
+    `- URL: ${input.issueUrl}`,
+    `- Issue type: ${input.issueType || "Unknown"}`,
+    `- Jira status: ${input.status}`,
+    `- Priority: ${input.priority || "Unknown"}`,
+    `- Assignee: ${input.assignee || "Unassigned"}`,
+    `- MVP Track: ${input.customFields.mvpTrack || "Not set"}`,
+    `- MVP Loop Stage: ${input.customFields.loopStage || "Not set"}`,
+    `- Verification Surface: ${input.customFields.verificationSurface || "Not set"}`,
+    `- Human Final Review: ${input.customFields.humanFinalReview || "Not set"}`,
+    `- Verified Build/Commit: ${input.customFields.verifiedBuildOrCommit || "Not set"}`,
+    "",
+    "Dynamic work/testing recipe:",
+    `- Work kind: ${workRecipe.kind}`,
+    `- Source: ${workRecipe.source}`,
+    `- Risk: ${workRecipe.risk}`,
+    `- Testing posture: ${workRecipe.testingPosture}`,
+    `- AI operating mode: ${workRecipe.aiOperatingModel.label}`,
+    `- AI operating summary: ${workRecipe.aiOperatingModel.summary}`,
+    `- Smart-zone rule: ${workRecipe.aiOperatingModel.smartZoneRule}`,
+    `- Handoff rule: ${workRecipe.aiOperatingModel.handoffRule}`,
+    `- Proof authority: ${workRecipe.proofAuthority.label}`,
+    `- Agent may claim 100% done: ${workRecipe.proofAuthority.agentMayClaimDone ? "YES, after all named proof steps pass and evidence is included" : "NO"}`,
+    `- Agent done language: ${workRecipe.proofAuthority.agentDoneLanguage}`,
+    `- Human verification language: ${workRecipe.proofAuthority.humanVerificationLanguage}`,
+    `- Dashboard update rule: ${humanTestPlan.dashboardUpdateRule}`,
+    "- If you complete automated/simulator/worker testing, paste an Agent Test Update Jira comment so the live checklist reflects your proof.",
+    "- If real phones/APNs/BLE/Sentry are required, do not mark done; say exactly what John/Tay must test next.",
+    "- Issue signals:",
+    ...workRecipe.issueSignals.map((signal) => `  - ${signal}`),
+    "- Acceptance questions:",
+    ...workRecipe.acceptanceQuestions.map((question) => `  - ${question}`),
+    "- Repro steps required before coding:",
+    ...workRecipe.reproduceSteps.map((step) => `  - ${step}`),
+    "- Coding guardrails:",
+    ...workRecipe.aiOperatingModel.promptRules.map((rule) => `  - ${rule}`),
+    ...workRecipe.guardrails.map((guardrail) => `  - ${guardrail}`),
+    "- Out of scope:",
+    ...workRecipe.outOfScope.map((scope) => `  - ${scope}`),
+    "",
+    "Before touching code:",
+    "1. Confirm the ticket is still the same issue, status, and acceptance shown above.",
+    "2. Confirm the acceptance/proof recipe is concrete enough to pass or fail.",
+    "3. If acceptance is missing or conflicts with the ticket, stop and add a Jira comment asking for the missing decision.",
+    "4. Create the branch named above from latest main unless John/Tay explicitly gives another base.",
+    "",
+    "Implementation contract:",
+    "1. Make the smallest code change that satisfies the locked acceptance.",
+    "2. Prefer a failing test first when the behavior can be reproduced in automated or simulator form.",
+    "3. Follow evidence, not guesses. If the likely root cause is wrong, pause and report the new finding.",
+    "4. Do not delete or weaken tests to get green.",
+    "5. Do not touch out-of-scope areas unless the locked acceptance is impossible without it; explain any scope expansion.",
+    "",
+    "Verification contract:",
+    "- Run the exact proof recipe below, plus any directly affected existing tests.",
+    "- If the surface is Automated, Simulator, or Worker Smoke only, you may say the agent-side proof is complete after every required check passes.",
+    "- If the surface includes One Phone, Two Phones, TestFlight/APNs, BLE, or Sentry Watch, you may only say ready for John/Tay verification.",
+    "- Include command names and short results. Do not paste huge logs.",
+    "- If a command cannot run, say why and what weaker evidence you used.",
+    "",
+    "Current Jira description / acceptance excerpt:",
+    descriptionExcerpt,
+    "",
+    "Linked Jira context:",
+    linkedIssues.length ? linkedIssues.map((issue) => `- ${issue}`).join("\n") : "- No linked issues returned.",
+    "",
+    "Required proof recipe:",
+    `- Source: ${proofRecipe.source}`,
+    `- Missing proof details: ${proofRecipe.missingCount}`,
+    proofRecipe.requirements.length
+      ? proofRecipe.requirements
+          .map((requirement) =>
+            [
+              `- ${requirement.label}`,
+              `  Required because: ${requirement.requiredBecause}`,
+              `  Current detail: ${requirement.hasConcreteProof ? requirement.detail : "MISSING - add this before claiming verification is ready"}`,
+              `  Tick rule: ${requirement.tickWhen}`,
+            ].join("\n"),
+          )
+          .join("\n")
+      : "- No required proof steps generated because Verification Surface is not set.",
+    "",
+    "Human verification request:",
+    requiredHumanStep
+      ? [
+          `- John/Tay step: ${requiredHumanStep.title}`,
+          `- What they should do: ${requiredHumanStep.doThis}`,
+          `- Pass means: ${requiredHumanStep.passMeans}`,
+          `- Fail means: ${requiredHumanStep.failMeans}`,
+        ].join("\n")
+      : "- No extra human device step generated. John/Tay should review the proof package and Jira result.",
+    "",
+    "Required Jira update before you hand back:",
+    "- If Jira write access is available, add the Agent Test Update comment to the ticket.",
+    "- If Jira field write access is available, set MVP Loop Stage to Human Verifying, Human Final Review to Ready, and Verified Build/Commit to the exact build/commit you tested.",
+    "- If Jira write access is not available, include the full Agent Test Update in your final response so John/Tay can paste it.",
+    "- Never set Human Final Review to Passed. That is John/Tay's gate.",
+    "",
+    "Agent Test Update template:",
+    agentUpdateTemplate || "- Agent Test Update template was not generated.",
+    "",
+    "PR workflow:",
+    `- Branch: ${branchName}`,
+    `- PR must link ${input.issueKey}.`,
+    "- PR body must include: what changed, files touched, proof commands/results, screenshots if UI/simulator, and what John/Tay still need to verify.",
+    "- After PR is open, stop. Do not merge.",
+    "",
+    "Stop conditions:",
+    "- Stop if the fix needs a product decision not written in Jira.",
+    "- Stop if real phone/APNs/BLE/Sentry proof is required and you only have simulator evidence.",
+    "- Stop if another active PR owns the same hot files and rebase/coordination is needed.",
+    "- Stop if you cannot identify the root cause within a reasonable investigation window; report what you found.",
+    "",
+    "Jira access for this checklist is server-side only:",
+    "- Use JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN as environment variables only if they are already configured for your agent.",
+    "- Never print or expose their values.",
+    "",
+    "Deliverable:",
+    "- Smallest code change that satisfies locked acceptance.",
+    "- Relevant tests/checks run with evidence.",
+    "- PR opened and linked to Jira if code changed.",
+    "- Agent Test Update posted to Jira or returned for John/Tay to paste.",
+    "- Clear statement: agent-side proof complete, or ready for human verification, or blocked with exact unblocker.",
+  ].join("\n");
+}
+
+function readJiraConfig(overrides: { jiraApiToken?: string } = {}):
+  | { baseUrl: string; email: string; token: string }
+  | { missingEnv: string[] } {
+  const env = {
+    JIRA_BASE_URL: process.env.JIRA_BASE_URL,
+    JIRA_EMAIL: process.env.JIRA_EMAIL,
+    JIRA_API_TOKEN: process.env.JIRA_API_TOKEN || overrides.jiraApiToken,
+  };
+  const missingEnv = Object.entries(env)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+
+  if (missingEnv.length > 0) {
+    return { missingEnv };
+  }
+
+  try {
+    const url = new URL(env.JIRA_BASE_URL as string);
+    return {
+      baseUrl: url.origin,
+      email: env.JIRA_EMAIL as string,
+      token: env.JIRA_API_TOKEN as string,
+    };
+  } catch {
+    return { missingEnv: ["JIRA_BASE_URL"] };
+  }
+}
+
+async function jiraFetch<T>(
+  config: { baseUrl: string; email: string; token: string },
+  path: string,
+): Promise<T> {
+  const response = await fetch(`${config.baseUrl}${path}`, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Basic ${Buffer.from(`${config.email}:${config.token}`).toString("base64")}`,
+    },
+  });
+
+  if (!response.ok) {
+    const status = `${response.status} ${response.statusText}`.trim();
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Jira returned ${status}. Check server-side Jira credentials and Browse Projects permission.`);
+    }
+    if (response.status === 404) {
+      throw new Error(`Jira returned ${status}. Confirm the issue key exists and the account can browse it.`);
+    }
+    throw new Error(`Jira returned ${status || "an error"} while loading the issue.`);
+  }
+
+  return (await response.json()) as T;
+}
+
+function toComment(value: unknown): JiraComment | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const author =
+    record.author && typeof record.author === "object"
+      ? fieldToText((record.author as Record<string, unknown>).displayName)
+      : "Unknown author";
+
+  return {
+    id: fieldToText(record.id) || "comment",
+    author,
+    created: fieldToText(record.created),
+    text: adfToPlainText(record.body),
+  };
+}
+
+function toIssueLinks(value: unknown): JiraIssueLink[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((link) => {
+      if (!link || typeof link !== "object") return null;
+      const record = link as Record<string, unknown>;
+      const type = record.type && typeof record.type === "object" ? (record.type as Record<string, unknown>) : {};
+      const inwardIssue = record.inwardIssue;
+      const outwardIssue = record.outwardIssue;
+      const issue = inwardIssue && typeof inwardIssue === "object" ? inwardIssue : outwardIssue;
+
+      if (!issue || typeof issue !== "object") return null;
+
+      const issueRecord = issue as Record<string, unknown>;
+      const fields = issueRecord.fields && typeof issueRecord.fields === "object"
+        ? (issueRecord.fields as Record<string, unknown>)
+        : {};
+      const relationship = inwardIssue ? fieldToText(type.inward) : fieldToText(type.outward);
+
+      return {
+        key: fieldToText(issueRecord.key),
+        relationship: relationship || "linked",
+        summary: fieldToText(fields.summary),
+        status: nestedText(fields.status, "name"),
+      };
+    })
+    .filter((link): link is JiraIssueLink => Boolean(link?.key));
+}
+
+function toParentLink(value: unknown): JiraIssueLink | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  const record = value as Record<string, unknown>;
+  const fields = record.fields && typeof record.fields === "object"
+    ? (record.fields as Record<string, unknown>)
+    : {};
+  const key = fieldToText(record.key);
+
+  if (!key) return undefined;
+
+  return {
+    key,
+    relationship: "parent",
+    summary: fieldToText(fields.summary),
+    status: nestedText(fields.status, "name"),
+  };
+}
+
+function nestedText(value: unknown, key: string): string {
+  if (!value || typeof value !== "object") return "";
+  return fieldToText((value as Record<string, unknown>)[key]);
+}
+
+function fieldToText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return compactText(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return compactText(value.map(fieldToText).filter(Boolean).join(", "));
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    for (const key of ["value", "name", "displayName", "key"]) {
+      const nestedValue = record[key];
+      if (typeof nestedValue === "string") return compactText(nestedValue);
+    }
+
+    if (record.type === "doc" || Array.isArray(record.content)) {
+      return adfToPlainText(record);
+    }
+  }
+
+  return "";
+}
+
+function compactText(value: string): string {
+  return value
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function excerpt(value: string, maxLength: number): string {
+  const normalized = compactText(value);
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3).trim()}...`;
+}
