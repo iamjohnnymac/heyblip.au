@@ -268,6 +268,22 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
   const phoneStep = findManualBugStep(plan.steps);
   const finalStep = plan.steps.find((step) => /pass|fail|jira|clear/i.test(step.title));
   const workKind = data.workRecipe.kind;
+  const statusLower = (data.status || "").toLowerCase();
+  const stageLower = (data.customFields.loopStage || "").toLowerCase();
+  // "Not started" = the ticket exists but no AI has picked it up yet.
+  // "In flight" = an AI is mid-work but hasn't posted a summary.
+  const notStarted = !plan.agentUpdate.found && (
+    statusLower === "to do" ||
+    statusLower === "open" ||
+    statusLower === "backlog" ||
+    statusLower.includes("selected") ||
+    statusLower.includes("reproducing") ||
+    statusLower.includes("acceptance") ||
+    stageLower.includes("candidate") ||
+    stageLower.includes("selected") ||
+    stageLower.includes("reproducing") ||
+    stageLower.includes("acceptance")
+  );
 
   if (plan.canAgentFinishAlone) {
     return [
@@ -296,16 +312,26 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
 
   return [
     {
-      title: plan.agentUpdate.found ? "Read what the AI tested" : "AI is still coding this",
+      title: plan.agentUpdate.found
+        ? "Read what the AI tested"
+        : notStarted
+          ? "Send this to an AI to start"
+          : "AI is still coding this",
       body: plan.agentUpdate.found
         ? "Skim the AI's summary in Jira before you pick up a phone — it tells you what it changed and what it tested."
-        : "Nothing for you to do yet. An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
+        : notStarted
+          ? "No AI has picked this up yet. Tap a green button below to send the prompt to Codex or Claude — the AI will do the coding and post a summary back to Jira."
+          : "An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
       pass: plan.agentUpdate.found
         ? "The summary has real commands or screenshots and a build number — not [Passed / Failed] placeholders."
-        : "The AI's summary appears in Jira with real values, not template placeholders.",
+        : notStarted
+          ? "After you send it: an AI takes the prompt, does the work, and posts a summary in Jira."
+          : "The AI's summary appears in Jira with real values, not template placeholders.",
       fail: plan.agentUpdate.found
         ? "The summary is vague, missing the build, or still has [Passed / Failed] placeholders."
-        : "No summary yet, or it still has unfilled [Passed / Failed] placeholders.",
+        : notStarted
+          ? "Nobody picked it up, or they posted without filling the template properly."
+          : "No summary yet, or it still has unfilled [Passed / Failed] placeholders.",
     },
     {
       title: buildOrCommit ? "Use the right build" : "Find out which build to test",
