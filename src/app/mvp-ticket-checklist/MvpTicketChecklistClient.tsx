@@ -645,17 +645,22 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         type="button"
                         onClick={async () => {
                           await copyToClipboard("kickoff-codex", data.codingAgentPrompt);
-                          window.open("https://chatgpt.com/codex", "_blank", "noopener,noreferrer");
+                          window.location.href = "codex://";
                         }}
                         className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
-                        title="Copies the full prompt + opens Codex Cloud in a new tab. Paste into the chat."
+                        title="Copies the full prompt + opens the Codex desktop app. Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-codex" && copyResult.status === "copied" ? (
-                          <Check size={16} strokeWidth={3} />
+                          <>
+                            <Check size={16} strokeWidth={3} />
+                            Codex opened — paste it
+                          </>
                         ) : (
-                          <ArrowRight size={15} />
+                          <>
+                            <ArrowRight size={15} />
+                            Send to Codex
+                          </>
                         )}
-                        Send to Codex Cloud
                       </button>
                     ) : null}
                     {!hasAgentProof ? (
@@ -663,19 +668,20 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         type="button"
                         onClick={async () => {
                           await copyToClipboard("kickoff-claude", data.codingAgentPrompt);
+                          window.location.href = "claude://";
                         }}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
-                        title="Copies the full prompt. Open a terminal in heyblip.au and run claude — then paste."
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                        title="Copies the full prompt + opens the Claude desktop app. Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-claude" && copyResult.status === "copied" ? (
                           <>
-                            <Check size={15} className="text-emerald-300" />
-                            Pasted? In Terminal: claude
+                            <Check size={16} strokeWidth={3} />
+                            Claude opened — paste it
                           </>
                         ) : (
                           <>
-                            <Copy size={15} />
-                            Copy for Claude Code
+                            <ArrowRight size={15} />
+                            Send to Claude
                           </>
                         )}
                       </button>
