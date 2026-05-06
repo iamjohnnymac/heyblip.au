@@ -68,6 +68,48 @@ test("isTestable filters out passed Human Final Review", () => {
   assert.equal(isTestable(c), false);
 });
 
+test("isTestable filters out In Progress tickets with no readiness evidence", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        status: { name: "In Progress" },
+        customfield_10044: { value: "Candidate" },
+        customfield_10046: { value: "Not Ready" },
+        customfield_10047: "Not set",
+      },
+    }),
+  );
+  assert.equal(isTestable(c), false);
+});
+
+test("isTestable keeps In Progress tickets that have a build named", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        status: { name: "In Progress" },
+        customfield_10044: { value: "Agent Coding" },
+        customfield_10046: { value: "Not Ready" },
+        customfield_10047: "62",
+      },
+    }),
+  );
+  assert.equal(isTestable(c), true);
+});
+
+test("isTestable keeps Verifying tickets even with no other evidence", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        status: { name: "Verifying" },
+        customfield_10044: { value: "" },
+        customfield_10046: { value: "" },
+        customfield_10047: "",
+      },
+    }),
+  );
+  assert.equal(isTestable(c), true);
+});
+
 test("rankCandidates pushes older Verifying tickets to the top", () => {
   const fresh = normaliseCandidate(makeRawCandidate({ key: "BDEV-FRESH" }));
   const stale = normaliseCandidate(

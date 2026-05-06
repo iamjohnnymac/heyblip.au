@@ -296,22 +296,24 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
 
   return [
     {
-      title: plan.agentUpdate.found ? "Read the agent result" : "Stop: wait for the agent",
+      title: plan.agentUpdate.found ? "Read what the AI tested" : "AI is still coding this",
       body: plan.agentUpdate.found
-        ? "Check the agent says what it tested before you pick up a phone."
-        : "Do not test yet. Ask the agent to post the Agent Test Update first.",
+        ? "Skim the AI's summary in Jira before you pick up a phone — it tells you what it changed and what it tested."
+        : "Nothing for you to do yet. An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
       pass: plan.agentUpdate.found
-        ? "Update has real commands or screenshots and the build is named — no [Passed / Failed] placeholders."
-        : "An Agent Test Update appears in Jira with real values, not template placeholders.",
+        ? "The summary has real commands or screenshots and a build number — not [Passed / Failed] placeholders."
+        : "The AI's summary appears in Jira with real values, not template placeholders.",
       fail: plan.agentUpdate.found
-        ? "Update is vague, has [Passed / Failed] placeholders, or doesn't name the build."
-        : "No Agent Test Update yet, or it still has [Passed / Failed] template placeholders.",
+        ? "The summary is vague, missing the build, or still has [Passed / Failed] placeholders."
+        : "No summary yet, or it still has unfilled [Passed / Failed] placeholders.",
     },
     {
-      title: buildOrCommit ? "Use the right build" : "Stop: get the build",
-      body: buildOrCommit ? `Only test ${buildOrCommit}.` : "Do not test until Jira says the exact build or commit.",
+      title: buildOrCommit ? "Use the right build" : "Find out which build to test",
+      body: buildOrCommit
+        ? `Only test ${buildOrCommit}. Other builds may not have the fix.`
+        : "Don't test yet. Jira needs to name the exact build or commit so you don't test the wrong version.",
       pass: "Your phone has the same build written on Jira.",
-      fail: "You are testing the wrong build, or the build is unknown.",
+      fail: "You're testing the wrong build, or no build is named.",
     },
     {
       title: "Try the bug once",
@@ -334,11 +336,11 @@ function buildMascotFallbackSpeech(step: StudentTestStep | undefined, humanTestP
   const title = step.title.toLowerCase();
 
   if (title.includes("wait") || title.includes("agent")) {
-    return "Stop here first. Ask the agent to post what it tested before you touch the phones.";
+    return "Hold here. Ask the agent to post what it tested before you touch the phones.";
   }
 
   if (title.includes("build") || title.includes("commit")) {
-    return "Stop here first. Get the exact build or commit so you test the right version.";
+    return "Hold here. Get the exact build or commit so you test the right version.";
   }
 
   if (title.includes("pass") || title.includes("fail") || title.includes("write")) {
@@ -510,30 +512,30 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
     className: string;
   } = allStepsComplete
     ? {
-        label: "DONE: write result in Jira",
-        body: "All local steps are ticked. Put the final PASS or FAIL evidence back into Jira before closing.",
+        label: "Done — write the result in Jira",
+        body: "All steps ticked. Paste your PASS or FAIL into Jira before closing.",
         className: "border-emerald-300/35 bg-emerald-300/10 text-emerald-100",
       }
     : !hasAgentProof
       ? {
-          label: "STOP: waiting for agent",
-          body: "Do not test yet. First, get the agent to post exactly what it tested.",
+          label: "Not your turn yet — AI is still coding",
+          body: "Don't pick up your phone. The AI hasn't posted a test summary yet.",
           localNote: step1LocallyTicked
-            ? "You ticked step 1 locally, but Jira still has no Agent Test Update. Refresh to recheck."
+            ? "You ticked step 1, but Jira still has no AI summary. Refresh to recheck."
             : undefined,
           className: "border-amber-300/35 bg-amber-300/10 text-amber-100",
         }
       : !hasBuild
         ? {
-            label: "STOP: missing build",
-            body: "Do not test yet. Jira needs the exact build number or commit first.",
+            label: "Almost there — Jira needs to name the build",
+            body: "The AI posted but didn't say which build to test. Don't guess — ask for the exact build.",
             localNote: step2LocallyTicked
-              ? "You ticked step 2 locally, but Jira still has no build/commit named. Refresh to recheck."
+              ? "You ticked step 2, but Jira still has no build/commit named. Refresh to recheck."
               : undefined,
             className: "border-amber-300/35 bg-amber-300/10 text-amber-100",
           }
         : {
-            label: "READY: test this build",
+            label: "Ready to test",
             body: `Use ${buildOrCommit} and follow the active step below.`,
             className: "border-emerald-300/35 bg-emerald-300/10 text-emerald-100",
           };
@@ -606,22 +608,11 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   }`}
                   id={currentStepDomId}
                 >
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className={`text-xs font-bold uppercase tracking-wide ${
-                        allStepsComplete
-                          ? "text-emerald-200"
-                          : !hasAgentProof || !hasBuild
-                            ? "text-amber-200"
-                            : "text-sky-200"
-                      }`}>
-                        {allStepsComplete ? statusCard.label : !hasAgentProof || !hasBuild ? statusCard.label : "Do this now"}
-                      </p>
-                      <h2 className="mt-1 break-words text-2xl font-bold leading-tight sm:text-3xl" style={textWrapStyle}>
-                        {currentStep ? currentStep.title : "Write the result in Jira"}
-                      </h2>
-                    </div>
-                    <span className="rounded-lg border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-bold text-white/90">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <h2 className="min-w-0 break-words text-2xl font-bold leading-tight sm:text-3xl" style={textWrapStyle}>
+                      {currentStep ? currentStep.title : "Write the result in Jira"}
+                    </h2>
+                    <span className="shrink-0 rounded-lg border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-bold text-white/90">
                       Step {Math.min(currentStepIndex + 1, studentSteps.length || 1)} / {studentSteps.length || 1}
                     </span>
                   </div>
@@ -649,7 +640,21 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   ) : null}
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {currentStep ? (
+                    {!hasAgentProof && agentUpdateTemplate ? (
+                      <CopyButton
+                        status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
+                        onClick={() => copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body)}
+                        label="Send template to the AI"
+                      />
+                    ) : null}
+                    {!hasAgentProof ? (
+                      <CopyButton
+                        status={copyResult?.id === "agent-prompt-banner" ? copyResult.status : undefined}
+                        onClick={() => copyToClipboard("agent-prompt-banner", data.codingAgentPrompt)}
+                        label="Copy AI handoff prompt"
+                      />
+                    ) : null}
+                    {currentStep && hasAgentProof && hasBuild ? (
                       <button
                         type="button"
                         onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
@@ -658,20 +663,16 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         <Check size={17} strokeWidth={3} />
                         Mark this step done
                       </button>
-                    ) : null}
-                    {!hasAgentProof && agentUpdateTemplate ? (
-                      <CopyButton
-                        status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
-                        onClick={() => copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body)}
-                        label="Copy Agent Test Update"
-                      />
-                    ) : null}
-                    {!hasAgentProof ? (
-                      <CopyButton
-                        status={copyResult?.id === "agent-prompt-banner" ? copyResult.status : undefined}
-                        onClick={() => copyToClipboard("agent-prompt-banner", data.codingAgentPrompt)}
-                        label="Copy coding-agent prompt"
-                      />
+                    ) : currentStep ? (
+                      <button
+                        type="button"
+                        onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
+                        title="Tick this only if you've genuinely completed this step"
+                      >
+                        <Check size={15} />
+                        Tick anyway
+                      </button>
                     ) : null}
                     {statusCard.localNote ? (
                       <button

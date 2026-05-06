@@ -55,10 +55,6 @@ export type QueueRow = QueueCandidate & {
   surfaceList: string[];
 };
 
-const TESTABLE_STATUSES = new Set(
-  ["in progress", "verifying", "human verifying", "selected"].map((s) => s.toLowerCase()),
-);
-
 const SKIP_STATUSES = new Set(["done", "passed", "closed", "won't do", "wont do"].map((s) => s.toLowerCase()));
 
 const PRIORITY_WEIGHTS: Record<string, number> = {
@@ -165,7 +161,22 @@ export function isTestable(candidate: QueueCandidate): boolean {
   const status = candidate.status.toLowerCase();
   if (SKIP_STATUSES.has(status)) return false;
   if (candidate.humanFinalReview.toLowerCase() === "passed") return false;
-  return TESTABLE_STATUSES.has(status) || candidate.loopStage.toLowerCase().includes("verifying");
+
+  // A ticket is only "ready for John/Tay to test" when there's evidence the
+  // agent has handed it over. Without one of these signals, opening the
+  // ticket in Buddy will land on a STOP page — never suggest those.
+  const review = candidate.humanFinalReview.toLowerCase();
+  const stage = candidate.loopStage.toLowerCase();
+  const buildField = candidate.verifiedBuildOrCommit.toLowerCase();
+  const hasBuild = Boolean(buildField) && buildField !== "not set";
+  const stageReady = stage.includes("verifying") || stage.includes("in build") || stage.includes("ci green");
+
+  if (status.includes("verifying")) return true;
+  if (review === "ready") return true;
+  if (stageReady) return true;
+  if (hasBuild) return true;
+
+  return false;
 }
 
 function ageHours(iso: string, now = Date.now()): number {
