@@ -640,18 +640,21 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   ) : null}
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {!hasAgentProof && agentUpdateTemplate ? (
-                      <CopyButton
-                        status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
-                        onClick={() => copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body)}
-                        label="Send template to the AI"
-                      />
-                    ) : null}
                     {!hasAgentProof ? (
                       <CopyButton
                         status={copyResult?.id === "agent-prompt-banner" ? copyResult.status : undefined}
                         onClick={() => copyToClipboard("agent-prompt-banner", data.codingAgentPrompt)}
-                        label="Copy AI handoff prompt"
+                        label="Copy full prompt for a new AI session"
+                      />
+                    ) : null}
+                    {!hasAgentProof && agentUpdateTemplate ? (
+                      <CopyButton
+                        status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
+                        onClick={async () => {
+                          await copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body);
+                          window.open(data.issueUrl, "_blank", "noopener,noreferrer");
+                        }}
+                        label="Send result template to Jira"
                       />
                     ) : null}
                     {currentStep && hasAgentProof && hasBuild ? (
