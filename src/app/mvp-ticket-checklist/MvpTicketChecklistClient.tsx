@@ -620,40 +620,41 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   <p className="text-base leading-7 text-white">{currentStep?.body || "Add the final PASS or FAIL evidence to Jira."}</p>
 
                   {currentStep ? (
-                    <div className="mt-4 grid gap-3 text-sm leading-6 sm:grid-cols-2">
-                      <div className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 p-3">
-                        <p className="font-bold text-emerald-100">Pass looks like</p>
-                        <p className="mt-1 text-[var(--muted-strong)]">{currentStep.pass}</p>
-                      </div>
-                      <div className="rounded-lg border border-red-300/25 bg-red-300/10 p-3">
-                        <p className="font-bold text-red-100">Fail looks like</p>
-                        <p className="mt-1 text-[var(--muted-strong)]">{currentStep.fail}</p>
-                      </div>
+                    <div className="mt-3 grid gap-1.5 text-sm leading-6">
+                      <p className="flex items-start gap-2 text-[var(--muted-strong)]">
+                        <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-300/20 text-[10px] font-bold text-emerald-200">✓</span>
+                        <span><span className="font-semibold text-emerald-100">Pass:</span> {currentStep.pass}</span>
+                      </p>
+                      <p className="flex items-start gap-2 text-[var(--muted-strong)]">
+                        <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-300/20 text-[10px] font-bold text-red-200">✗</span>
+                        <span><span className="font-semibold text-red-100">Fail:</span> {currentStep.fail}</span>
+                      </p>
                     </div>
                   ) : null}
 
                   {statusCard.localNote ? (
-                    <p className="mt-4 flex items-center gap-2 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm font-semibold text-amber-100">
+                    <p className="mt-3 flex items-center gap-2 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm font-semibold text-amber-100">
                       <RefreshCcw size={14} />
                       {statusCard.localNote}
                     </p>
                   ) : null}
 
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {!hasAgentProof ? (
+                  {/* Primary actions */}
+                  {!hasAgentProof ? (
+                    <div className="mt-4 grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={async () => {
                           await copyToClipboard("kickoff-codex", data.codingAgentPrompt);
                           window.location.href = "codex://";
                         }}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
                         title="Copies the full prompt + opens the Codex desktop app. Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-codex" && copyResult.status === "copied" ? (
                           <>
-                            <Check size={16} strokeWidth={3} />
-                            Codex opened — paste it
+                            <Check size={15} strokeWidth={3} />
+                            <span className="truncate">Paste in Codex</span>
                           </>
                         ) : (
                           <>
@@ -662,21 +663,19 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                           </>
                         )}
                       </button>
-                    ) : null}
-                    {!hasAgentProof ? (
                       <button
                         type="button"
                         onClick={async () => {
                           await copyToClipboard("kickoff-claude", data.codingAgentPrompt);
                           window.location.href = "claude://";
                         }}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
                         title="Copies the full prompt + opens the Claude desktop app. Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-claude" && copyResult.status === "copied" ? (
                           <>
-                            <Check size={16} strokeWidth={3} />
-                            Claude opened — paste it
+                            <Check size={15} strokeWidth={3} />
+                            <span className="truncate">Paste in Claude</span>
                           </>
                         ) : (
                           <>
@@ -685,63 +684,85 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                           </>
                         )}
                       </button>
-                    ) : null}
-                    {!hasAgentProof && agentUpdateTemplate ? (
-                      <CopyButton
-                        status={copyResult?.id === agentUpdateTemplate.id ? copyResult.status : undefined}
-                        onClick={async () => {
-                          await copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body);
-                          window.open(data.issueUrl, "_blank", "noopener,noreferrer");
-                        }}
-                        label="Send result template to Jira"
-                      />
-                    ) : null}
-                    {currentStep && hasAgentProof && hasBuild ? (
+                    </div>
+                  ) : null}
+
+                  {currentStep && hasAgentProof && hasBuild ? (
+                    <div className="mt-4">
                       <button
                         type="button"
                         onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                        className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200 sm:w-auto"
                       >
                         <Check size={17} strokeWidth={3} />
                         Mark this step done
                       </button>
-                    ) : currentStep ? (
-                      <button
-                        type="button"
-                        onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
-                        title="Tick this only if you've genuinely completed this step"
-                      >
-                        <Check size={15} />
-                        Tick anyway
-                      </button>
-                    ) : null}
-                    {statusCard.localNote ? (
-                      <button
-                        type="button"
-                        onClick={() => window.location.reload()}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-amber-300/45 bg-amber-300/10 px-3 text-sm font-bold text-amber-100 transition-colors hover:bg-amber-300/20"
-                      >
-                        <RefreshCcw size={15} />
-                        Refresh from Jira
-                      </button>
-                    ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* Secondary actions */}
+                  {(!hasAgentProof || statusCard.localNote) ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {!hasAgentProof && agentUpdateTemplate ? (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body);
+                            window.open(data.issueUrl, "_blank", "noopener,noreferrer");
+                          }}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-black/20 px-3 text-xs font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
+                          title="Copies a small format template + opens Jira so you can paste it as a comment."
+                        >
+                          {copyResult?.id === agentUpdateTemplate.id && copyResult.status === "copied" ? (
+                            <Check size={13} className="text-emerald-300" />
+                          ) : (
+                            <Clipboard size={13} />
+                          )}
+                          Send result template to Jira
+                        </button>
+                      ) : null}
+                      {statusCard.localNote ? (
+                        <button
+                          type="button"
+                          onClick={() => window.location.reload()}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-amber-300/45 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-300/20"
+                        >
+                          <RefreshCcw size={13} />
+                          Refresh from Jira
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* Tertiary utility row */}
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-white/10 pt-3 text-xs">
                     <a
                       href={data.issueUrl}
-                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
+                      className="inline-flex items-center gap-1 font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
                     >
+                      <ExternalLink size={12} />
                       Open in Jira
-                      <ExternalLink size={15} />
                     </a>
                     <button
                       type="button"
                       onClick={() => setHelperHidden((value) => !value)}
-                      className="ml-auto inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/35 bg-sky-300/10 px-3 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-300/15"
+                      className="inline-flex items-center gap-1 font-semibold text-sky-200 transition-colors hover:text-sky-100"
                       aria-expanded={!helperHidden}
                     >
-                      <Sparkles size={15} />
+                      <Sparkles size={12} />
                       {helperHidden ? "Ask Buddy" : "Hide Buddy"}
                     </button>
+                    {currentStep && (!hasAgentProof || !hasBuild) ? (
+                      <button
+                        type="button"
+                        onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
+                        className="ml-auto inline-flex items-center gap-1 font-semibold text-[var(--muted)] transition-colors hover:text-white"
+                        title="Tick this only if you've genuinely completed this step"
+                      >
+                        <Check size={12} />
+                        Tick anyway
+                      </button>
+                    ) : null}
                   </div>
 
                   {!helperHidden ? (
