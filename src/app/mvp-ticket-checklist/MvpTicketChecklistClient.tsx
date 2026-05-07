@@ -416,7 +416,12 @@ function resultTitle(state: TicketChecklistPageState): string {
   return "Ticket loaded";
 }
 
-type BuildChipKind = "queued" | "running" | "success" | "failed" | "cancelled";
+type BuildChipKind = "queued" | "running" | "processing" | "success" | "failed" | "cancelled";
+
+// Apple typically processes a TestFlight upload in 5-30 min after CI finishes.
+// We show a distinct "Apple processing" state for this window so the chip
+// doesn't lie ("ready" before the build is actually installable).
+const APPLE_PROCESSING_MINUTES = 20;
 
 type BuildChip = {
   kind: BuildChipKind;
@@ -441,6 +446,8 @@ function buildChipClassName(kind: BuildChipKind): string {
     case "queued":
     case "running":
       return `${base} border-amber-300/45 bg-amber-300/10 text-amber-100 hover:border-amber-300/70 hover:bg-amber-300/15`;
+    case "processing":
+      return `${base} border-amber-300/45 bg-amber-300/10 text-amber-100 hover:border-amber-300/70 hover:bg-amber-300/15`;
     case "success":
       return `${base} border-emerald-300/45 bg-emerald-300/10 text-emerald-100 hover:border-emerald-300/70 hover:bg-emerald-300/15`;
     case "failed":
@@ -454,6 +461,7 @@ function buildChipDotClass(kind: BuildChipKind): string {
   switch (kind) {
     case "queued":
     case "running":
+    case "processing":
       return "bg-amber-200";
     case "success":
       return "bg-emerald-300";
@@ -475,6 +483,8 @@ function buildChipTooltip(chip: BuildChip): string {
       return `TestFlight build is queued on GitHub${matchSuffix}. Click to open the run.`;
     case "running":
       return `TestFlight build is in progress${matchSuffix}. Click to open the run.`;
+    case "processing":
+      return `CI uploaded the build to App Store Connect. Apple is now verifying it for TestFlight (usually 5-30 min). Once it's ready you can install it on your phone.`;
     case "success":
       return `TestFlight build finished successfully${matchSuffix}. Click to open the run.`;
     case "failed":
@@ -516,6 +526,26 @@ function deriveBuildChip(state: BuildStatusState): BuildChip | null {
 
   if (run.status === "completed") {
     if (run.conclusion === "success") {
+      // CI succeeded, but Apple still needs to process the upload before
+      // it's installable in TestFlight. Show a distinct "processing" state
+      // for the first APPLE_PROCESSING_MINUTES after CI completion.
+      const completedAt = Date.parse(run.updatedAt);
+      const minutesSinceComplete = Number.isFinite(completedAt)
+        ? (Date.now() - completedAt) / 60_000
+        : Infinity;
+
+      if (minutesSinceComplete < APPLE_PROCESSING_MINUTES) {
+        const elapsed = Math.floor(minutesSinceComplete);
+        const elapsedLabel = elapsed < 1 ? "just uploaded" : `${elapsed}m`;
+        return {
+          kind: "processing",
+          label: `${previewPrefix}Apple processing · ${elapsedLabel}`,
+          href: run.htmlUrl,
+          pulsing: true,
+          matchType: body.match,
+        };
+      }
+
       const label = body.match === "preview-branch"
         ? "Preview build ready"
         : "Build ready in TestFlight";

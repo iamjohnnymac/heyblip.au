@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@types/three": "^0.183.1",
+    "@vercel/kv": "^3.0.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.7.0",
     "next": "16.2.1",
@@ -19,6 +20,7 @@
     "three": "^0.183.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

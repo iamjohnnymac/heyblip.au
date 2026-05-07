@@ -2068,6 +2068,24 @@ function buildCodingAgentPrompt(
 ): string {
   const descriptionExcerpt = excerpt(input.descriptionText, 1200) || "No Jira description text returned.";
   const branchName = `${branchPrefixForWorkKind(workRecipe.kind)}/${input.issueKey}-${slugifyBranchPart(input.summary || workRecipe.kind)}`;
+
+  // Detect Sentry signals: explicit issue IDs in the description (APPLE-IOS-N
+  // is HeyBlip's iOS Sentry project, plus generic SHORT-PROJ-NNN style) or a
+  // verification surface that mentions Sentry. When either is present, surface
+  // an explicit Sentry-research instruction so the AI doesn't skip the step.
+  const sentryIds = Array.from(
+    new Set(
+      [
+        ...(input.descriptionText.match(/\bAPPLE-IOS-[A-Z0-9]+\b/g) || []),
+        ...(input.descriptionText.match(/\b[A-Z]{2,}-[A-Z0-9]+\b/g) || []).filter((token) =>
+          /IOS|SENTRY|ANDROID|JS|WEB/.test(token),
+        ),
+      ].filter((id) => !id.startsWith(input.issueKey.split("-")[0] + "-")),
+    ),
+  );
+  const surfaceMentionsSentry = /sentry/i.test(input.customFields.verificationSurface || "");
+  const descriptionMentionsSentry = /\bsentry\b/i.test(input.descriptionText || "");
+  const hasSentryContext = sentryIds.length > 0 || surfaceMentionsSentry || descriptionMentionsSentry;
   const linkedIssues = [
     input.parent ? `${input.parent.key} (${input.parent.relationship}): ${input.parent.summary || input.parent.status}` : "",
     ...input.links.map((link) => `${link.key} (${link.relationship}, ${link.status || "unknown"}): ${link.summary}`),
@@ -2134,6 +2152,18 @@ function buildCodingAgentPrompt(
     ...workRecipe.guardrails.map((guardrail) => `  - ${guardrail}`),
     "- Out of scope:",
     ...workRecipe.outOfScope.map((scope) => `  - ${scope}`),
+    ...(hasSentryContext
+      ? [
+          "",
+          "Sentry context (check this BEFORE writing code):",
+          `- Issue IDs in the ticket: ${sentryIds.length ? sentryIds.join(", ") : "(none parsed — read the description for Sentry references)"}`,
+          "- Use the Sentry MCP (mcp__sentry__* tools) to fetch each issue group: get breadcrumbs, stack trace, event count, affected releases, and OS/device clusters.",
+          "- If Sentry exposes a Seer / AI root-cause hypothesis, read it as a starting point — verify against the code, do not trust blindly.",
+          "- Look for repeating patterns just before the error: retry storms, race-with-network-loss, identity-cache mismatches, unhandled async cancellation.",
+          "- After your fix is in a build, watch the same issue groups on the new release; if events keep landing, the fix did not take.",
+          "- Privacy: never paste raw stack traces, user emails, account IDs, or breadcrumbs into the PR description, Jira comment, or chat. Summarise patterns only.",
+        ]
+      : []),
     "",
     "Before touching code:",
     "1. Confirm the ticket is still the same issue, status, and acceptance shown above.",
@@ -2187,6 +2217,19 @@ function buildCodingAgentPrompt(
         ].join("\n")
       : "- No extra human device step generated. John/Tay should review the proof package and Jira result.",
     "",
+    "Writing for John and Tay (non-coders) in the Agent Test Update:",
+    "- The 'Human test requested:' section MUST be readable by a non-technical CEO. No jargon, no debug-log sequences, no internal field names.",
+    "- For each manual action, write what to physically do, not what happens internally:",
+    "  - GOOD: 'Delete the app, reinstall from TestFlight, sign in. App should load normally with no stuck spinners or repeated alerts.'",
+    "  - BAD: 'Install the merged build on a phone whose noise_public_key is missing from the auth Postgres. Cold launch. Expected debug-log sequence: 2× JWT authenticate: user not found...'",
+    "- Translate technical preconditions into a plain-English how-to. Examples:",
+    "  - 'noise_public_key missing from Postgres' → 'delete the app and reinstall (clears the phone identity)'",
+    "  - 'cold launch' → 'open the app fresh after install'",
+    "  - 'expected debug-log sequence X then Y then Z' → omit; replace with the user-visible outcome ('app signs you in within 5 seconds, no spinner, no error banner')",
+    "- For Sentry watch instructions: name the issue groups, the build to watch, and what 'pass' looks like in user terms (events drop / events stay flat). Do NOT paste raw stack traces or breadcrumb logs.",
+    "- If technical detail is genuinely useful for Tay (frontend dev) but not John, put it in a separate 'Optional debug detail (for engineers):' section AFTER the human test request.",
+    "- The non-coder reader should be able to do the test without opening the codebase, without running terminals, and without consulting Slack.",
+    "",
     "Required Jira update before you hand back:",
     "- If Jira write access is available, add the Agent Test Update comment to the ticket.",
     "- If Jira field write access is available, set MVP Loop Stage to Human Verifying, Human Final Review to Ready, and Verified Build/Commit to the exact build/commit you tested.",
@@ -2201,6 +2244,23 @@ function buildCodingAgentPrompt(
     `- PR must link ${input.issueKey}.`,
     "- PR body must include: what changed, files touched, proof commands/results, screenshots if UI/simulator, and what John/Tay still need to verify.",
     "- After PR is open, stop. Do not merge.",
+    "",
+    "Build delivery for John/Tay (so they can actually install the fix):",
+    "- John tests on his iPhone via TestFlight; he never builds locally and is non-technical. Tay also tests via TestFlight (he codes on Windows, so no Xcode access).",
+    "- The repo has `.github/workflows/deploy-testflight.yml`. Triggers: tag push (`beta-*`, `alpha-*`, `v*`) OR manual `workflow_dispatch`. NOT a regular merge to main — merging alone does not cut a build today.",
+    "- AFTER YOUR PR MERGES, you must explicitly trigger the build. Pick one:",
+    "  1. `gh workflow run deploy-testflight.yml --ref main -f build_note=\"BDEV-XXX <one-liner>\"` — fires the same workflow against main",
+    "  2. Tag the merge commit and push: `git tag beta-1.0.0-<N+1> && git push origin beta-1.0.0-<N+1>` — fires the tag-based trigger. Read the latest beta tag with `gh release list -L 1` to choose <N+1>.",
+    "- IF John/Tay explicitly asks for a preview before merging (\"can you cut a build for the PR?\"): trigger the workflow on the PR branch via `gh workflow run deploy-testflight.yml --ref <branch>`. Does not require merge.",
+    "- After the workflow run finishes, read the build number from the workflow logs (TestFlight upload step) and post it in Jira's `Verified Build/Commit` field. Also ping #blip-dev so John/Tay see it without checking Jira.",
+    "- When you write build instructions in the Agent Test Update, do NOT tell John to checkout commits or run xcodebuild. Tell him: \"Open TestFlight on your phone, install build {N} of HeyBlip Beta.\"",
+    "",
+    "Slack updates (Workspace: The Mesh):",
+    "- After PR opens: post a one-liner in #blip-dev with the ticket key, PR link, and 'agent: ready for review'. Use Slack MCP if available.",
+    "- After Agent Test Update lands in Jira: post a short note in #blip-dev so John/Tay see it without checking Jira.",
+    `- If real-device verification is required, ping the right task channel: #jmac-tasks for John, #tay-tasks for Tay. Otherwise default to #blip-dev only — do not @-mention people in dev chatter.`,
+    "- If you stop or block on a decision: post a brief 'blocked on: [one line]' in #blip-dev so somebody picks it up.",
+    "- Slack messages stay short — link to Jira/PR for detail. Never paste secrets, raw stack traces, user emails, or full logs.",
     "",
     "Stop conditions:",
     "- Stop if the fix needs a product decision not written in Jira.",

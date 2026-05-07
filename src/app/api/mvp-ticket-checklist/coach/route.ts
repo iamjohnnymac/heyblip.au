@@ -239,17 +239,48 @@ function sanitizeExcerpt(value: string, maxLength: number): string {
 
 function buildCoachInstructions(): string {
   return [
-    "You are a calm HeyBlip MVP stabilization coach for non-coders.",
+    "You are a calm helper inside Blip Test Buddy, a tool used by John and Tay to verify HeyBlip bug fixes.",
     "You receive sanitized ticket state only. Do not ask for raw Jira text.",
-    "Explain it like you are helping a smart high-schooler test a bug.",
-    "Use plain English. Avoid software jargon.",
-    "Keep it short: max 4 John/Tay steps, each under 18 words.",
-    "Prefer STOP/GO language when proof or build data is missing.",
-    "Do not invent facts. Use only the sanitized data provided.",
-    "Return valid JSON only. Do not wrap it in markdown.",
-    "The JSON must contain: plainTitle, whereYouAre, nextMove, johnTaySteps, agentInstructions, jiraUpdate, stopIf.",
-    "johnTaySteps must be an array of objects with label and detail. The other list fields must be arrays of strings.",
+    "Talk to John and Tay like a friendly studio manager — clear, direct, no jargon.",
+    "",
+    "VOCABULARY — strict rules. The reader is not a developer.",
+    "- Say \"AI\" or \"the AI\". NEVER say \"agent\", \"the agent\", \"coding agent\".",
+    "- Say \"the AI's summary in Jira\". NEVER say \"Agent Test Update\".",
+    "- Say \"build number\" or \"build name\". NEVER say \"verified build/commit\".",
+    "- Use \"hold off\", \"sit tight\", \"wait\". NEVER use \"STOP:\", \"STOP.\", or shouting all-caps.",
+    "- Use \"check\", \"refresh\", \"open Jira\". NEVER say \"poll\", \"fetch\", \"pull state\".",
+    "",
+    "STYLE rules.",
+    "- Keep it short: nextMove is one sentence. Max 4 John/Tay steps, each under 18 words.",
+    "- Sentences start with a verb in the imperative when telling the user what to do.",
+    "- Do not invent facts. Use only the sanitized data provided.",
+    "",
+    "JSON format.",
+    "- Return valid JSON only. Do not wrap it in markdown.",
+    "- The JSON must contain: plainTitle, whereYouAre, nextMove, johnTaySteps, agentInstructions, jiraUpdate, stopIf.",
+    "- johnTaySteps must be an array of objects with label and detail. The other list fields must be arrays of strings.",
   ].join("\n");
+}
+
+// Post-process Kimi output to scrub any jargon that leaks past the system prompt.
+// Belt-and-braces: the prompt forbids these terms but Kimi sometimes regresses.
+function scrubJargon(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/\bAgent Test Update\b/g, "AI's summary in Jira")
+    .replace(/\bagent test update\b/g, "AI's summary in Jira")
+    .replace(/\bcoding agent\b/gi, "AI")
+    .replace(/\bthe agent\b/g, "the AI")
+    .replace(/\bThe agent\b/g, "The AI")
+    .replace(/\ban agent\b/g, "an AI")
+    .replace(/\bAn agent\b/g, "An AI")
+    .replace(/\bagent\b/g, "AI")
+    .replace(/\bAgent\b/g, "AI")
+    .replace(/\bSTOP[.!:](\s*)/g, "Hold off — ")
+    .replace(/\bSTOP\b/g, "Hold off")
+    .replace(/\bVerified Build\/Commit\b/gi, "build number")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function buildKimiSanitizedCoach(
@@ -418,9 +449,9 @@ function buildCoachSteps(data: ChecklistViewModel): CoachStep[] {
 
 function normalizeCoach(value: Partial<CoachResponse>, fallback: CoachResponse): CoachResponse {
   return {
-    plainTitle: value.plainTitle || fallback.plainTitle,
-    whereYouAre: value.whereYouAre || fallback.whereYouAre,
-    nextMove: value.nextMove || fallback.nextMove,
+    plainTitle: scrubJargon(value.plainTitle || fallback.plainTitle),
+    whereYouAre: scrubJargon(value.whereYouAre || fallback.whereYouAre),
+    nextMove: scrubJargon(value.nextMove || fallback.nextMove),
     johnTaySteps: normalizeSteps(value.johnTaySteps, fallback.johnTaySteps),
     agentInstructions: normalizeStrings(value.agentInstructions, fallback.agentInstructions),
     jiraUpdate: normalizeStrings(value.jiraUpdate, fallback.jiraUpdate),
@@ -436,7 +467,7 @@ function normalizeSteps(value: unknown, fallback: CoachStep[]): CoachStep[] {
       const label = (step as { label?: unknown }).label;
       const detail = (step as { detail?: unknown }).detail;
       if (typeof label !== "string" || typeof detail !== "string") return null;
-      return { label, detail };
+      return { label: scrubJargon(label), detail: scrubJargon(detail) };
     })
     .filter((step): step is CoachStep => Boolean(step));
 
@@ -445,6 +476,8 @@ function normalizeSteps(value: unknown, fallback: CoachStep[]): CoachStep[] {
 
 function normalizeStrings(value: unknown, fallback: string[]): string[] {
   if (!Array.isArray(value)) return fallback;
-  const strings = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  const strings = value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => scrubJargon(item));
   return strings.length ? strings : fallback;
 }
