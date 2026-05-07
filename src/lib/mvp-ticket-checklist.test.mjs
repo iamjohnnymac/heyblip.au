@@ -198,7 +198,57 @@ test("converts Jira document bodies into readable plain text", () => {
         },
       ],
     }),
-    "Lock acceptance\nbefore coding.\nNo Jira writes",
+    "Lock acceptance\nbefore coding.\n- No Jira writes",
+  );
+});
+
+test("preserves ordered-list numbering and code marks in ADF", () => {
+  // Used by the "Human test requested" panel: ordered lists become
+  // "1. ", "2. " items, code-marked text gets backticks so the UI can
+  // render it as inline code without a self-describing format.
+  const out = adfToPlainText({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "Human test requested", marks: [{ type: "strong" }] },
+        ],
+      },
+      {
+        type: "orderedList",
+        attrs: { order: 1 },
+        content: [
+          {
+            type: "listItem",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "One Phone", marks: [{ type: "em" }] },
+                  { type: "text", text: " — install build " },
+                  { type: "text", text: "97e6ddc", marks: [{ type: "code" }] },
+                  { type: "text", text: "." },
+                ],
+              },
+            ],
+          },
+          {
+            type: "listItem",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "Sentry Watch — APPLE-IOS-4K should drop." }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(
+    out,
+    "Human test requested\n1. One Phone — install build `97e6ddc`.\n\n2. Sentry Watch — APPLE-IOS-4K should drop.",
   );
 });
 
@@ -421,6 +471,58 @@ test("parses agent test updates into the human test plan", () => {
   assert.equal(viewModel.humanTestPlan.agentUpdate.surfaceResults.simulator, "Passed");
   assert.equal(viewModel.humanTestPlan.agentUpdate.humanVerificationNeeded, false);
   assert.ok(viewModel.humanTestPlan.steps[0].doThis.includes("abc123"));
+});
+
+test("parses heading-style 'Human test requested' with ordered list items and code", () => {
+  // BDEV-493 has a bold heading (no colon) followed by a preamble paragraph
+  // and then an ordered list — this exercises the structured panel path.
+  const viewModel = buildChecklistViewModel({
+    issueKey: "BDEV-493",
+    summary: "Auth token recovery",
+    status: "To Do",
+    descriptionText: "Acceptance.",
+    customFields: {
+      mvpTrack: "Auth",
+      loopStage: "Verifying",
+      verificationSurface: "Automated, Simulator, One Phone, Sentry Watch",
+      humanFinalReview: "Ready",
+      verifiedBuildOrCommit: "",
+    },
+    comments: [
+      {
+        id: "1",
+        author: "John McKean",
+        created: "2026-05-08T01:00:00.000+0000",
+        text: [
+          "BDEV-493 agent test update",
+          "- Agent testing: Passed",
+          "- Build/commit: PR #391 head 97e6ddc",
+          "- Human verification needed: Yes",
+          "",
+          "Human test requested",
+          "Verification Surface = One Phone, Sentry Watch.",
+          "1. One Phone — install build `97e6ddc` and cold launch. No infinite loop.",
+          "2. Sentry Watch — APPLE-IOS-4K and APPLE-IOS-4J should drop sharply.",
+        ].join("\n"),
+      },
+    ],
+    links: [],
+    issueUrl: "https://heyblip.atlassian.net/browse/BDEV-493",
+  });
+
+  const update = viewModel.humanTestPlan.agentUpdate;
+  assert.equal(update.found, true);
+  assert.equal(update.humanTestRequestedItems.length, 2);
+  assert.equal(update.humanTestRequestedItems[0].number, 1);
+  assert.equal(update.humanTestRequestedItems[0].title, "One Phone");
+  assert.ok(update.humanTestRequestedItems[0].body.includes("install build"));
+  // Backtick fragments survive into the segments[] for inline <code>.
+  const codeSegments = update.humanTestRequestedItems[0].segments.filter((seg) => seg.kind === "code");
+  assert.equal(codeSegments.length, 1);
+  assert.equal(codeSegments[0].value, "97e6ddc");
+  assert.equal(update.humanTestRequestedItems[1].title, "Sentry Watch");
+  assert.ok(update.humanTestRequestedPreamble.includes("Verification Surface"));
+  assert.deepEqual(update.sentryWatchIds.sort(), ["APPLE-IOS-4J", "APPLE-IOS-4K"]);
 });
 
 test("uses concrete proof recipe details when Jira provides them", () => {

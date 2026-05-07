@@ -440,13 +440,41 @@ export type HumanTestStep = {
   failMeans: string;
 };
 
+export type HumanTestRequestedItem = {
+  number: number;
+  title: string;
+  body: string;
+  // Pre-segmented for rendering: each segment is either plain text or
+  // an inline code fragment (originally wrapped in backticks by the ADF
+  // parser). Lets the UI render <code> without re-implementing markdown.
+  segments: HumanTestRequestedSegment[];
+};
+
+export type HumanTestRequestedSegment = {
+  kind: "text" | "code";
+  value: string;
+};
+
 export type AgentTestUpdateViewModel = {
   found: boolean;
   status: "passed" | "failed" | "not-run" | "unknown";
   label: string;
   buildOrCommit: string;
   humanVerificationNeeded: boolean | null;
+  // Legacy single-line summary kept for backwards compatibility with the
+  // AI handoff prompt builder and the existing coach payload.
   humanTestRequested: string;
+  // Structured form for the inline panel: ordered-list items split out
+  // with optional preamble. Empty when the parser can't find or split
+  // the block — UI should fall back to `humanTestRequested`.
+  humanTestRequestedItems: HumanTestRequestedItem[];
+  // The preamble paragraph(s) before the first numbered item, if any.
+  // For BDEV-493 this is the "Verification Surface = ..." sentence.
+  humanTestRequestedPreamble: string;
+  // Sentry issue IDs (APPLE-IOS-N etc.) detected anywhere in the block.
+  // Lets the panel render a "watch in Sentry" callout without a separate
+  // pass through the comment.
+  sentryWatchIds: string[];
   evidence: string[];
   surfaceResults: {
     automated: string;
@@ -1023,17 +1051,54 @@ export function adfToPlainText(value: unknown): string {
   if (typeof value === "string") return compactText(value);
 
   const parts: string[] = [];
+  // Track the current ordered-list counter so list items can render as
+  // "1. ", "2. ", etc. — preserves structure when downstream code splits
+  // the parsed text into items (e.g. the "Human test requested" panel).
+  const orderedListCounters: number[] = [];
+
+  function hasMark(record: Record<string, unknown>, type: string): boolean {
+    if (!Array.isArray(record.marks)) return false;
+    return record.marks.some(
+      (mark) =>
+        mark && typeof mark === "object" && (mark as Record<string, unknown>).type === type,
+    );
+  }
 
   function visit(node: unknown): void {
     if (!node || typeof node !== "object") return;
     const record = node as Record<string, unknown>;
 
+    if (record.type === "orderedList") {
+      const startAttr = (record.attrs as Record<string, unknown> | undefined)?.order;
+      const start = typeof startAttr === "number" && Number.isFinite(startAttr) ? startAttr : 1;
+      orderedListCounters.push(start);
+    }
+
     if (typeof record.text === "string") {
-      parts.push(record.text);
+      // Wrap text marked as `code` in backticks so the parser preserves
+      // the visual cue (and downstream UI can render it as <code>).
+      if (hasMark(record, "code")) {
+        parts.push("`" + record.text + "`");
+      } else {
+        parts.push(record.text);
+      }
     }
 
     if (record.type === "hardBreak") {
       parts.push("\n");
+    }
+
+    // Prefix ordered-list items with their number ("1. ", "2. "...) so
+    // structure survives the round trip. Bullet-list items get a "- "
+    // bullet for the same reason.
+    if (record.type === "listItem") {
+      if (orderedListCounters.length > 0) {
+        const idx = orderedListCounters.length - 1;
+        parts.push(`${orderedListCounters[idx]}. `);
+        orderedListCounters[idx] += 1;
+      } else {
+        parts.push("- ");
+      }
     }
 
     if (Array.isArray(record.content)) {
@@ -1049,6 +1114,10 @@ export function adfToPlainText(value: unknown): string {
       record.type === "blockquote"
     ) {
       parts.push("\n");
+    }
+
+    if (record.type === "orderedList") {
+      orderedListCounters.pop();
     }
   }
 
@@ -1801,6 +1870,9 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
       buildOrCommit: "",
       humanVerificationNeeded: null,
       humanTestRequested: "",
+      humanTestRequestedItems: [],
+      humanTestRequestedPreamble: "",
+      sentryWatchIds: [],
       evidence: [],
       surfaceResults: {
         automated: "Not reported",
@@ -1821,13 +1893,29 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
         : null
     : null;
 
+  // Known sibling headings that can follow "Human test requested" without a
+  // colon — we stop at any of them so the panel doesn't absorb the Evidence
+  // bullets or the Dashboard fields.
+  const humanTestLines = readBlockLines(comment.text, "Human test requested", [
+    "Evidence",
+    "Dashboard fields to update",
+    "Dashboard fields",
+  ]);
+  const { items: humanTestRequestedItems, preamble: humanTestRequestedPreamble } =
+    parseHumanTestRequested(humanTestLines);
+  const humanTestRequested = humanTestLines.join(" ");
+  const sentryWatchIds = extractSentryIds(humanTestLines.join("\n"));
+
   return {
     found: true,
     status,
     label: status === "passed" ? "Agent checks passed" : status === "failed" ? "Agent checks failed" : "Agent update found",
     buildOrCommit: readLabeledValue(comment.text, "Build/commit"),
     humanVerificationNeeded,
-    humanTestRequested: readIndentedBlock(comment.text, "Human test requested"),
+    humanTestRequested,
+    humanTestRequestedItems,
+    humanTestRequestedPreamble,
+    sentryWatchIds,
     evidence: readBulletsAfterHeading(comment.text, "Evidence"),
     surfaceResults: {
       automated: readLabeledValue(comment.text, "Automated") || "Not reported",
@@ -1841,6 +1929,92 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   };
 }
 
+// Splits the "Human test requested" block into structured items so the
+// inline panel can render them as a numbered list. Each item gets a
+// short title (first emphasised phrase or the whole line up to em-dash)
+// and a body, with backtick-wrapped fragments split into <code> segments.
+function parseHumanTestRequested(lines: string[]): {
+  items: HumanTestRequestedItem[];
+  preamble: string;
+} {
+  if (!lines.length) return { items: [], preamble: "" };
+
+  const numbered: { number: number; raw: string }[] = [];
+  const preambleLines: string[] = [];
+
+  for (const line of lines) {
+    const match = line.match(/^(\d+)\.\s+(.+)$/);
+    if (match) {
+      numbered.push({ number: Number(match[1]), raw: match[2].trim() });
+    } else if (numbered.length === 0) {
+      preambleLines.push(line);
+    } else {
+      // A continuation paragraph for the previous numbered item.
+      const last = numbered[numbered.length - 1];
+      last.raw = `${last.raw} ${line}`.trim();
+    }
+  }
+
+  const items = numbered.map(({ number, raw }) => buildHumanTestRequestedItem(number, raw));
+  return { items, preamble: preambleLines.join(" ").trim() };
+}
+
+function buildHumanTestRequestedItem(num: number, raw: string): HumanTestRequestedItem {
+  // Detect a leading "Title — body" or "Title: body" so the panel can
+  // bold the title without us re-parsing it. Em-dash is the AI's
+  // convention; falls back to the first colon or the first 6 words.
+  const dashMatch = raw.match(/^([^—:]{1,80}?)\s+—\s+(.+)$/);
+  const colonMatch = !dashMatch ? raw.match(/^([^:]{1,80}?):\s+(.+)$/) : null;
+  let title = "";
+  let body = raw;
+  if (dashMatch) {
+    title = dashMatch[1].trim();
+    body = dashMatch[2].trim();
+  } else if (colonMatch) {
+    title = colonMatch[1].trim();
+    body = colonMatch[2].trim();
+  } else {
+    const words = raw.split(/\s+/).slice(0, 6).join(" ");
+    title = words.length < raw.length ? `${words}…` : words;
+  }
+
+  return {
+    number: num,
+    title,
+    body,
+    segments: splitBacktickSegments(body),
+  };
+}
+
+// Splits a string on backtick-wrapped fragments so the UI can render
+// inline <code> without re-running a markdown parser. Backticks are
+// emitted by adfToPlainText for any text node carrying a `code` mark.
+function splitBacktickSegments(value: string): HumanTestRequestedSegment[] {
+  if (!value) return [];
+  const parts = value.split(/`([^`]+)`/g);
+  const segments: HumanTestRequestedSegment[] = [];
+  parts.forEach((chunk, idx) => {
+    if (!chunk) return;
+    // Even indices are plain text, odd indices are the captured code.
+    segments.push({ kind: idx % 2 === 0 ? "text" : "code", value: chunk });
+  });
+  return segments;
+}
+
+function extractSentryIds(text: string): string[] {
+  // APPLE-IOS-N is HeyBlip's iOS Sentry project. Conservatively match
+  // PROJECT-N forms that look like Sentry short IDs. Filters BDEV-N out
+  // so our own ticket keys don't show up as Sentry issues.
+  const matches = text.match(/\b[A-Z][A-Z0-9]+-[A-Z0-9]+(?:-[A-Z0-9]+)?\b/g) || [];
+  return Array.from(
+    new Set(
+      matches.filter(
+        (id) => /IOS|ANDROID|JS|SENTRY/i.test(id) && !id.startsWith("BDEV-"),
+      ),
+    ),
+  );
+}
+
 function parseAgentStatus(value: string): AgentTestUpdateViewModel["status"] {
   if (/pass/i.test(value)) return "passed";
   if (/fail/i.test(value)) return "failed";
@@ -1850,26 +2024,72 @@ function parseAgentStatus(value: string): AgentTestUpdateViewModel["status"] {
 
 function readLabeledValue(text: string, label: string): string {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = text.match(new RegExp(`^\\s*${escaped}\\s*:\\s*(.+)$`, "im"));
+  // Allow an optional bullet prefix ("- " or "* ") because adfToPlainText
+  // now emits a "- " in front of bulletList items. Without this the
+  // labeled lookups (`Build/commit:`, `Automated:`, …) miss every comment
+  // whose author authored those values as bulletList items in the ADF.
+  const match = text.match(new RegExp(`^\\s*[-*]?\\s*${escaped}\\s*:\\s*(.+)$`, "im"));
   return match ? compactText(match[1]) : "";
 }
 
 function readIndentedBlock(text: string, label: string): string {
+  // Backwards-compat: collapses the block onto a single line. Use
+  // readBlockLines() when newline structure matters (e.g. ordered lists).
+  return readBlockLines(text, label).join(" ");
+}
+
+// Returns the lines of the block under `label`, preserving structure.
+// Accepts both label-with-colon ("Label: value") and heading style
+// ("Label" alone on a line — common in ADF where bold headings have no
+// colon). Stops at the next labeled section *or* the next bare heading
+// known to follow ours, so adjacent blocks don't bleed in.
+function readBlockLines(
+  text: string,
+  label: string,
+  stopAtHeadings: string[] = [],
+): string[] {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => new RegExp(`^\\s*${escaped}\\s*:`, "i").test(line));
-  if (start === -1) return "";
+  // Allow an optional bullet prefix on both the labeled and heading
+  // forms because adfToPlainText prefixes bulletList items with "- ".
+  const labeledRegex = new RegExp(`^\\s*[-*]?\\s*${escaped}\\s*:`, "i");
+  const headingRegex = new RegExp(`^\\s*[-*]?\\s*${escaped}\\s*$`, "i");
+  const stopHeadingRegexes = stopAtHeadings.map(
+    (heading) =>
+      new RegExp(
+        `^\\s*[-*]?\\s*${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`,
+        "i",
+      ),
+  );
 
-  const sameLine = lines[start]?.split(":").slice(1).join(":").trim();
-  const collected = sameLine ? [sameLine] : [];
+  let start = lines.findIndex((line) => labeledRegex.test(line));
+  const isLabeled = start !== -1;
+  if (start === -1) {
+    start = lines.findIndex((line) => headingRegex.test(line));
+    if (start === -1) return [];
+  }
+
+  const collected: string[] = [];
+  if (isLabeled) {
+    const sameLine = lines[start]?.split(":").slice(1).join(":").trim();
+    if (sameLine) collected.push(sameLine.replace(/^\s*[-*]\s*/, ""));
+  }
 
   for (let index = start + 1; index < lines.length; index += 1) {
     const line = lines[index] || "";
-    if (/^\s*[A-Za-z][A-Za-z /-]{2,}\s*:/.test(line) && collected.length) break;
-    if (line.trim()) collected.push(line.replace(/^\s*[-*]\s*/, "").trim());
+    // Stop when a new labeled section starts.
+    if (/^\s*[-*]?\s*[A-Za-z][A-Za-z /-]{2,}\s*:/.test(line) && collected.length) break;
+    // Stop when we hit a known sibling heading (e.g. "Evidence" follows
+    // "Human test requested"). Bare headings have no colon so the
+    // labeled-section stop above can't catch them on its own.
+    if (collected.length && stopHeadingRegexes.some((re) => re.test(line))) break;
+    const trimmed = line.trim();
+    if (trimmed) {
+      collected.push(trimmed.replace(/^\s*[-*]\s*/, ""));
+    }
   }
 
-  return compactText(collected.join(" "));
+  return collected.map(compactText).filter(Boolean);
 }
 
 function readBulletsAfterHeading(text: string, label: string): string[] {

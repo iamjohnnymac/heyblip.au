@@ -198,6 +198,9 @@ const emptyHumanTestPlan: ChecklistViewModel["humanTestPlan"] = {
     buildOrCommit: "",
     humanVerificationNeeded: null,
     humanTestRequested: "",
+    humanTestRequestedItems: [],
+    humanTestRequestedPreamble: "",
+    sentryWatchIds: [],
     evidence: [],
     surfaceResults: {
       automated: "Not reported",
@@ -332,6 +335,24 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     ];
   }
 
+  // The AI's plain-English plan for John/Tay. Comes from the parsed
+  // ordered list under "Human test requested" — when present, we use it
+  // directly in step 3 so the user sees the real test (not a generic
+  // template fallback). Falls back to the legacy track-recipe text when
+  // the AI didn't write one.
+  const aiPhonePlan = plan.agentUpdate.humanTestRequestedItems;
+  const aiFirstItem = aiPhonePlan[0];
+  const aiPhoneInstruction = aiFirstItem
+    ? aiFirstItem.title && aiFirstItem.body
+      ? `${aiFirstItem.title} — ${aiFirstItem.body}`
+      : aiFirstItem.body || aiFirstItem.title
+    : "";
+  const aiPhonePassHint = aiFirstItem && /no infinite loop|no banner|no spinner|signs you in|no error/i.test(
+    aiFirstItem.body,
+  )
+    ? "The phone behaves as the AI's plan describes — no stuck spinner, no error, no loop."
+    : "";
+
   return [
     {
       title: plan.agentUpdate.found
@@ -340,12 +361,12 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
           ? "Send this to an AI to start"
           : "AI is still coding this",
       body: plan.agentUpdate.found
-        ? "Skim the AI's summary in Jira before you pick up a phone — it tells you what it changed and what it tested."
+        ? "The AI's summary is below — you don't need to leave Buddy. It tells you what changed, the build to install, and the exact thing to look for on your phone."
         : notStarted
           ? "No AI has picked this up yet. Tap a green button below to send the prompt to Codex or Claude — the AI will do the coding and post a summary back to Jira."
           : "An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
       pass: plan.agentUpdate.found
-        ? "The summary has real commands or screenshots and a build number — not [Passed / Failed] placeholders."
+        ? "The summary below has real commands or a build number — not [Passed / Failed] placeholders."
         : notStarted
           ? "After you send it: an AI takes the prompt, does the work, and posts a summary in Jira."
           : "The AI's summary appears in Jira with real values, not template placeholders.",
@@ -365,8 +386,15 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     },
     {
       title: "Try the bug once",
-      body: shortTestInstruction(phoneStep?.doThis || data.recommendedAction.steps[0] || "Run the test written on Jira.", workKind),
-      pass: capitalizeFirst(phoneStep?.passMeans || "The bug no longer happens."),
+      // When the AI gave us a plan, lean on it — the user is testing what the
+      // AI wrote, not a generic track template. The full plan lives in step 1's
+      // panel; we keep step 3 short so this card stays scannable.
+      body: aiPhoneInstruction
+        ? `${shortTestInstruction(aiPhoneInstruction, workKind)} ${aiPhonePlan.length > 1 ? "Full plan in step 1's panel above." : ""}`.trim()
+        : shortTestInstruction(phoneStep?.doThis || data.recommendedAction.steps[0] || "Run the test written on Jira.", workKind),
+      pass: capitalizeFirst(
+        aiPhonePassHint || phoneStep?.passMeans || "The bug no longer happens.",
+      ),
       fail: capitalizeFirst(phoneStep?.failMeans || "The bug still happens, or the result is confusing."),
     },
     {
@@ -579,6 +607,54 @@ function deriveBuildChip(state: BuildStatusState): BuildChip | null {
   return null;
 }
 
+// Reduces the verbose "Build/commit: PR ... head commit `97e6ddc` ..." line
+// the AI writes to a single short token suitable for a chip — "build 65" or
+// "commit e027d3e". Falls back to the raw value (truncated) when nothing
+// concrete jumps out.
+function shortBuildOrCommitChip(raw: string): { label: string; full: string } | null {
+  if (!raw) return null;
+  const buildMatch = raw.match(/\bbuild\s+(\d+[a-z]?)\b/i);
+  if (buildMatch) {
+    return { label: `Fix is in: build ${buildMatch[1]}`, full: raw };
+  }
+  // 7-12 char hex chunk surrounded by backticks or whitespace = a commit SHA
+  // worth showing. Skip BDEV/HEY ticket keys so we don't display BDEV-493 here.
+  const shaMatch = raw.match(/(?:\s|`|^)([0-9a-f]{7,12})(?:\s|`|$)/i);
+  if (shaMatch && !/^BDEV-/i.test(shaMatch[1])) {
+    return { label: `Fix is in: commit ${shaMatch[1]}`, full: raw };
+  }
+  // Last-resort: just show "Build/commit on file" — better than nothing for
+  // edge cases like "PR https://github.com/.../pull/391".
+  if (/pr\s*[#]?\d+|pull\/\d+/i.test(raw)) {
+    const prMatch = raw.match(/pull\/(\d+)|PR\s*#?(\d+)/i);
+    const prNum = prMatch ? prMatch[1] || prMatch[2] : "";
+    return { label: prNum ? `Fix is in: PR #${prNum}` : "Build/commit named", full: raw };
+  }
+  return null;
+}
+
+// Plain-English relative time. "just now", "2 hours ago", "yesterday",
+// "3 days ago". Falls back to a date string for older timestamps.
+function plainRelativeTime(iso: string | undefined): string {
+  if (!iso) return "";
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return "";
+  const diffMs = Date.now() - ts;
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 14) return `${days} days ago`;
+  try {
+    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
 async function writeClipboardText(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
@@ -605,6 +681,160 @@ async function writeClipboardText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Inline panel showing what the AI tested + the AI's plain-English plan
+// for John/Tay. Renders inside the active step card so the user no longer
+// needs to hop to Jira to see the test plan. Only mounts when the AI has
+// actually posted an Agent Test Update.
+function AgentTestSummaryPanel({
+  agentUpdate,
+}: {
+  agentUpdate: ChecklistViewModel["humanTestPlan"]["agentUpdate"];
+}) {
+  if (!agentUpdate.found) return null;
+  const buildChip = shortBuildOrCommitChip(agentUpdate.buildOrCommit);
+  const items = agentUpdate.humanTestRequestedItems;
+  const fallbackHumanTest =
+    items.length === 0 && agentUpdate.humanTestRequested
+      ? agentUpdate.humanTestRequested
+      : "";
+  const sentryIds = agentUpdate.sentryWatchIds;
+  const surfaceChips = (
+    [
+      { label: "Automated", value: agentUpdate.surfaceResults.automated },
+      { label: "Simulator", value: agentUpdate.surfaceResults.simulator },
+      { label: "Worker smoke", value: agentUpdate.surfaceResults.workerSmoke },
+    ] as const
+  ).filter((entry) => {
+    const v = (entry.value || "").trim();
+    return v && !/^not reported$/i.test(v);
+  });
+  const sourceLabel = agentUpdate.source
+    ? [agentUpdate.source.author, plainRelativeTime(agentUpdate.source.created)]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
+  return (
+    <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--accent-light)]">
+        <Sparkles size={13} />
+        What the AI tested
+      </div>
+
+      {buildChip ? (
+        <div
+          className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-3 py-1.5 text-sm font-semibold text-emerald-100"
+          title={buildChip.full}
+        >
+          <Check size={14} strokeWidth={3} />
+          {buildChip.label}
+        </div>
+      ) : null}
+
+      {items.length > 0 || fallbackHumanTest ? (
+        <div className="mt-4">
+          <h3 className="text-base font-semibold text-white">What to do on the phone</h3>
+          {agentUpdate.humanTestRequestedPreamble ? (
+            <p className="mt-1.5 text-sm leading-6 text-[var(--muted-strong)]">
+              {agentUpdate.humanTestRequestedPreamble}
+            </p>
+          ) : null}
+          {items.length > 0 ? (
+            <ol className="mt-2 grid list-none gap-3 pl-0">
+              {items.map((item) => (
+                <li
+                  key={item.number}
+                  className="flex gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3"
+                >
+                  <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/25 text-xs font-bold text-[var(--accent-light)]">
+                    {item.number}
+                  </span>
+                  <div className="min-w-0 flex-1 text-sm leading-6 text-white">
+                    {item.title ? (
+                      <span className="font-semibold text-white">{item.title}</span>
+                    ) : null}
+                    {item.title && item.body ? <span className="text-white"> — </span> : null}
+                    {item.segments.length > 0
+                      ? item.segments.map((segment, idx) =>
+                          segment.kind === "code" ? (
+                            <code
+                              key={idx}
+                              className="break-words rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)]"
+                            >
+                              {segment.value}
+                            </code>
+                          ) : (
+                            <span key={idx} className="text-[var(--muted-strong)]">
+                              {segment.value}
+                            </span>
+                          ),
+                        )
+                      : <span className="text-[var(--muted-strong)]">{item.body}</span>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-2 whitespace-pre-line text-sm leading-6 text-[var(--muted-strong)]">
+              {fallbackHumanTest}
+            </p>
+          )}
+        </div>
+      ) : null}
+
+      {sentryIds.length > 0 ? (
+        <div className="mt-4">
+          <h3 className="text-base font-semibold text-white">What to watch in Sentry</h3>
+          <p className="mt-1.5 text-sm leading-6 text-[var(--muted-strong)]">
+            On the next release, these alerts should drop sharply:{" "}
+            {sentryIds.map((id, idx) => (
+              <span key={id}>
+                <code className="rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)]">
+                  {id}
+                </code>
+                {idx < sentryIds.length - 1 ? ", " : ""}
+              </span>
+            ))}
+            . If they don&apos;t drop within 48 hours of the build going live, the fix didn&apos;t take.
+          </p>
+        </div>
+      ) : null}
+
+      {surfaceChips.length > 0 ? (
+        <div className="mt-4">
+          <h3 className="text-base font-semibold text-white">What the AI checked</h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {surfaceChips.map((chip) => {
+              const v = chip.value.toLowerCase();
+              const tone = /pass/.test(v)
+                ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100"
+                : /fail/.test(v)
+                  ? "border-red-300/45 bg-red-300/10 text-red-100"
+                  : "border-white/15 bg-white/[0.04] text-[var(--muted-strong)]";
+              return (
+                <span
+                  key={chip.label}
+                  className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${tone}`}
+                  title={chip.value}
+                >
+                  <span className="font-bold uppercase tracking-wide">{chip.label}</span>
+                  <span className="truncate font-medium normal-case">{chip.value}</span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {sourceLabel ? (
+        <p className="mt-4 text-[11px] uppercase tracking-wide text-[var(--muted)]">
+          From {sourceLabel}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 export default function MvpTicketChecklistClient({ state, accessParam }: Props) {
@@ -1021,6 +1251,25 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       </p>
                     </div>
                   ) : null}
+
+                  {/* Status drift notice — fix is in but Jira ticket didn't move out of To Do.
+                      Doesn't block the flow; just warns the user that the ticket status will
+                      catch up shortly. PM/Cowork own moving the ticket. */}
+                  {humanTestPlan.agentUpdate.found
+                    && humanTestPlan.agentUpdate.buildOrCommit
+                    && /^to do$|^todo$|^open$|^backlog$/i.test(data.status || "") ? (
+                    <p className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/35 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                      <span>
+                        Heads up: the fix is merged but Jira didn&apos;t move the ticket out of{" "}
+                        <span className="font-semibold">To Do</span>. PM/Cowork will fix the
+                        status — your testing is still valid.
+                      </span>
+                    </p>
+                  ) : null}
+
+                  {/* The "What the AI tested" panel — replaces the need to hop to Jira. */}
+                  <AgentTestSummaryPanel agentUpdate={humanTestPlan.agentUpdate} />
 
                   {statusCard.localNote ? (
                     <p className="mt-3 flex items-center gap-2 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm font-semibold text-amber-100">
