@@ -11,7 +11,6 @@ import {
   Bot,
   Check,
   ChevronDown,
-  Clipboard,
   Clock,
   Copy,
   ExternalLink,
@@ -75,7 +74,30 @@ type StudentTestStep = {
   fail: string;
 };
 
+type BuildRunSummary = {
+  id: number;
+  status: string;
+  conclusion: string | null;
+  name: string;
+  htmlUrl: string;
+  headSha: string;
+  headBranch: string;
+  createdAt: string;
+  updatedAt: string;
+  durationSec: number;
+};
+
+type BuildStatusBody =
+  | { status: "ready"; match: "ticket" | "preview-branch" | "latest-main" | "none"; run: BuildRunSummary | null }
+  | { status: "missing-config"; match: "none"; run: null }
+  | { status: "error"; match: "none"; run: null; message: string };
+
+type BuildStatusState =
+  | { kind: "idle" }
+  | { kind: "ready"; body: BuildStatusBody };
+
 const COACH_REQUEST_TIMEOUT_MS = 100000;
+const BUILD_STATUS_POLL_MS = 30_000;
 
 const loopStages = [
   "Candidate",
@@ -334,12 +356,12 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
           : "No summary yet, or it still has unfilled [Passed / Failed] placeholders.",
     },
     {
-      title: buildOrCommit ? "Use the right build" : "Find out which build to test",
+      title: buildOrCommit ? "Install the right build" : "Wait for the new TestFlight build",
       body: buildOrCommit
-        ? `Only test ${buildOrCommit}. Other builds may not have the fix.`
-        : "Don't test yet. Jira needs to name the exact build or commit so you don't test the wrong version.",
-      pass: "Your phone has the same build written on Jira.",
-      fail: "You're testing the wrong build, or no build is named.",
+        ? `Open TestFlight on your phone, find HeyBlip Beta, and install the latest build. Look for build ${buildOrCommit} (or the highest build number) — older builds don't have the fix.`
+        : "The fix needs a TestFlight build before you can test it. Either: (1) wait for the PR to merge — CI cuts a new TestFlight build automatically (5-15 mins), or (2) ask the AI to trigger a build for the PR branch directly. Once a build is named in Jira, this card turns green.",
+      pass: "TestFlight has a new HeyBlip Beta build and you've installed it.",
+      fail: "No new build in TestFlight yet, or you're still on an older one.",
     },
     {
       title: "Try the bug once",
@@ -394,6 +416,139 @@ function resultTitle(state: TicketChecklistPageState): string {
   return "Ticket loaded";
 }
 
+type BuildChipKind = "queued" | "running" | "success" | "failed" | "cancelled";
+
+type BuildChip = {
+  kind: BuildChipKind;
+  label: string;
+  href: string;
+  pulsing: boolean;
+  matchType: "ticket" | "preview-branch" | "latest-main";
+};
+
+function formatElapsed(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safe / 60);
+  const remaining = safe % 60;
+  if (minutes < 1) return `${remaining}s`;
+  return `${minutes}m ${remaining.toString().padStart(2, "0")}s`;
+}
+
+function buildChipClassName(kind: BuildChipKind): string {
+  const base =
+    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors";
+  switch (kind) {
+    case "queued":
+    case "running":
+      return `${base} border-amber-300/45 bg-amber-300/10 text-amber-100 hover:border-amber-300/70 hover:bg-amber-300/15`;
+    case "success":
+      return `${base} border-emerald-300/45 bg-emerald-300/10 text-emerald-100 hover:border-emerald-300/70 hover:bg-emerald-300/15`;
+    case "failed":
+      return `${base} border-red-300/45 bg-red-300/10 text-red-100 hover:border-red-300/70 hover:bg-red-300/15`;
+    case "cancelled":
+      return `${base} border-white/15 bg-black/30 text-white/70 hover:border-white/25 hover:bg-black/40`;
+  }
+}
+
+function buildChipDotClass(kind: BuildChipKind): string {
+  switch (kind) {
+    case "queued":
+    case "running":
+      return "bg-amber-200";
+    case "success":
+      return "bg-emerald-300";
+    case "failed":
+      return "bg-red-300";
+    case "cancelled":
+      return "bg-white/60";
+  }
+}
+
+function buildChipTooltip(chip: BuildChip): string {
+  const matchSuffix = chip.matchType === "preview-branch"
+    ? " (preview branch run, not yet on main)"
+    : chip.matchType === "latest-main"
+      ? " (latest main run — no commit named this ticket yet)"
+      : "";
+  switch (chip.kind) {
+    case "queued":
+      return `TestFlight build is queued on GitHub${matchSuffix}. Click to open the run.`;
+    case "running":
+      return `TestFlight build is in progress${matchSuffix}. Click to open the run.`;
+    case "success":
+      return `TestFlight build finished successfully${matchSuffix}. Click to open the run.`;
+    case "failed":
+      return `TestFlight build failed${matchSuffix}. Click to open the run.`;
+    case "cancelled":
+      return `TestFlight build was cancelled${matchSuffix}. Click to open the run.`;
+  }
+}
+
+function deriveBuildChip(state: BuildStatusState): BuildChip | null {
+  if (state.kind !== "ready") return null;
+  const body = state.body;
+  if (body.status !== "ready") return null;
+  if (body.match === "none" || !body.run) return null;
+
+  const previewPrefix = body.match === "preview-branch" ? "Preview " : "";
+  const run = body.run;
+
+  if (run.status === "queued") {
+    return {
+      kind: "queued",
+      label: `${previewPrefix}Build queued`,
+      href: run.htmlUrl,
+      pulsing: true,
+      matchType: body.match,
+    };
+  }
+
+  if (run.status === "in_progress") {
+    const elapsed = formatElapsed(run.durationSec);
+    return {
+      kind: "running",
+      label: `${previewPrefix}Building · ${elapsed}`,
+      href: run.htmlUrl,
+      pulsing: true,
+      matchType: body.match,
+    };
+  }
+
+  if (run.status === "completed") {
+    if (run.conclusion === "success") {
+      const label = body.match === "preview-branch"
+        ? "Preview build ready"
+        : "Build ready in TestFlight";
+      return {
+        kind: "success",
+        label,
+        href: run.htmlUrl,
+        pulsing: false,
+        matchType: body.match,
+      };
+    }
+    if (run.conclusion === "cancelled") {
+      return {
+        kind: "cancelled",
+        label: `${previewPrefix}Build cancelled`,
+        href: run.htmlUrl,
+        pulsing: false,
+        matchType: body.match,
+      };
+    }
+    // failure / timed_out / startup_failure / etc. — treat as failed.
+    return {
+      kind: "failed",
+      label: `${previewPrefix}Build failed`,
+      href: run.htmlUrl,
+      pulsing: false,
+      matchType: body.match,
+    };
+  }
+
+  return null;
+}
+
 async function writeClipboardText(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
@@ -430,6 +585,12 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   const proofRecipe = data?.proofRecipe ?? emptyProofRecipe;
   const humanTestPlan = data?.humanTestPlan ?? emptyHumanTestPlan;
   const [helperHidden, setHelperHidden] = useState(true);
+  const [celebration, setCelebration] = useState<string | null>(null);
+  const [pollLastChecked, setPollLastChecked] = useState<number>(() => Date.now());
+  const prevHasAgentProofRef = useRef(false);
+  const prevHasBuildRef = useRef(false);
+  const [buildStatus, setBuildStatus] = useState<BuildStatusState>({ kind: "idle" });
+  const prevBuildSuccessRef = useRef(false);
   const [coachState, setCoachState] = useState<CoachState>({ status: "idle" });
   const [copyResult, setCopyResult] = useState<{ id: string; status: "copied" | "failed" } | null>(null);
   const [checks, setChecks] = useState<Record<string, boolean>>(() => (data ? buildEmptyChecks(data) : {}));
@@ -524,6 +685,127 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   const allStepsComplete = studentSteps.length > 0 && activeStepIndex === -1;
   const hasAgentProof = humanTestPlan.agentUpdate.found;
   const hasBuild = Boolean(buildOrCommit);
+  const router = useRouter();
+  const pollEnabled = ready && !allStepsComplete;
+
+  useEffect(() => {
+    if (!pollEnabled) return;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    function refresh() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      setPollLastChecked(Date.now());
+      router.refresh();
+    }
+    function onVisibility() {
+      if (typeof document === "undefined" || document.hidden) return;
+      if (Date.now() - pollLastChecked > 15_000) {
+        refresh();
+      }
+    }
+    timer = setInterval(refresh, 30_000);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [pollEnabled, router, pollLastChecked]);
+
+  const [pollTick, setPollTick] = useState(0);
+  useEffect(() => {
+    if (!pollEnabled) return;
+    const tick = setInterval(() => setPollTick((value) => value + 1), 1000);
+    return () => clearInterval(tick);
+  }, [pollEnabled]);
+  const pollAgeSeconds = Math.max(0, Math.floor((Date.now() - pollLastChecked) / 1000));
+  const pollAgeLabel = pollAgeSeconds < 5 ? "just now" : `${pollAgeSeconds}s ago`;
+  void pollTick;
+
+  // Build-status chip — polls /api/.../build-status alongside Jira polling.
+  // Pauses when the page is hidden and stops once all steps are ticked
+  // (matches `pollEnabled`).
+  useEffect(() => {
+    if (!ready) return;
+    if (!pollEnabled) return;
+    let cancelled = false;
+    const accessQuery = accessParam ? `&access=${encodeURIComponent(accessParam)}` : "";
+
+    async function fetchBuildStatus() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const response = await fetch(
+          `/api/mvp-ticket-checklist/build-status?issue=${encodeURIComponent(issueKey)}${accessQuery}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok && response.status !== 502) return;
+        const body = (await response.json()) as BuildStatusBody;
+        if (cancelled) return;
+        setBuildStatus({ kind: "ready", body });
+      } catch {
+        // Network error — leave the previous state in place. The next poll retries.
+      }
+    }
+
+    fetchBuildStatus();
+    const timer = setInterval(fetchBuildStatus, BUILD_STATUS_POLL_MS);
+    function onVisibility() {
+      if (typeof document === "undefined" || document.hidden) return;
+      fetchBuildStatus();
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [ready, pollEnabled, issueKey, accessParam]);
+
+  const buildChip = useMemo(() => deriveBuildChip(buildStatus), [buildStatus]);
+
+  // Fire a celebration banner when the build flips to ready (success).
+  useEffect(() => {
+    if (!ready) return;
+    const isSuccessNow = Boolean(
+      buildChip && buildChip.kind === "success" && buildChip.matchType !== "latest-main",
+    );
+    if (isSuccessNow && !prevBuildSuccessRef.current) {
+      setCelebration("✅ Build ready in TestFlight — install the latest HeyBlip Beta build.");
+      const timeout = setTimeout(() => setCelebration(null), 8000);
+      prevBuildSuccessRef.current = true;
+      return () => clearTimeout(timeout);
+    }
+    if (!isSuccessNow) {
+      prevBuildSuccessRef.current = false;
+    }
+  }, [buildChip, ready]);
+
+  useEffect(() => {
+    if (!ready) {
+      prevHasAgentProofRef.current = hasAgentProof;
+      prevHasBuildRef.current = hasBuild;
+      return;
+    }
+    let message: string | null = null;
+    if (!prevHasAgentProofRef.current && hasAgentProof) {
+      message = "🎉 The AI just posted its summary in Jira.";
+    } else if (!prevHasBuildRef.current && hasBuild) {
+      message = "✅ Build is named — you can test now.";
+    }
+    prevHasAgentProofRef.current = hasAgentProof;
+    prevHasBuildRef.current = hasBuild;
+    if (message) {
+      setCelebration(message);
+      const timeout = setTimeout(() => setCelebration(null), 8000);
+      return () => clearTimeout(timeout);
+    }
+  }, [hasAgentProof, hasBuild, ready]);
   const currentStepKey = currentStep ? studentStepKey(currentStepIndex, currentStep.title) : "";
   const step1LocallyTicked = studentSteps[0]
     ? Boolean(checks[studentStepKey(0, studentSteps[0].title)])
@@ -565,11 +847,10 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
             body: `Use ${buildOrCommit} and follow the active step below.`,
             className: "border-emerald-300/35 bg-emerald-300/10 text-emerald-100",
           };
-  const progressLabels = ["Agent proof", "Build", "Test", "Jira result"].slice(0, Math.max(studentSteps.length, 1));
+  const progressLabels = ["AI summary", "Build", "Test", "Result"].slice(0, Math.max(studentSteps.length, 1));
   const surfaceSummary = realPhoneRequired
     ? "Final pass needs the named phone/TestFlight evidence. Use simulator only for the parts that do not depend on APNs, BLE, background wake, or two-account behavior."
     : "This looks simulator-first from Jira. Use phones only if the acceptance criteria add APNs, BLE, background, or two-account delivery.";
-  const agentUpdateTemplate = data?.commentTemplates.find((template) => /agent/i.test(`${template.id} ${template.title}`));
 
   return (
     <main className="mesh-gradient min-h-screen max-w-[100vw] overflow-x-hidden bg-[var(--background)] text-[var(--foreground)]">
@@ -594,7 +875,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
 
       <section className="px-4 pb-10 sm:px-6 lg:px-8">
         <div
-          className="mx-auto w-full min-w-0 max-w-[calc(100vw-2rem)] rounded-lg border border-[var(--border-strong)] bg-[var(--card-bg)] p-4 sm:max-w-7xl sm:p-6"
+          className="mx-auto w-full min-w-0 max-w-[calc(100vw-2rem)] rounded-3xl border border-[var(--border-strong)] bg-[var(--card-bg)] p-4 sm:max-w-7xl sm:p-7"
           style={viewportWidthStyle}
         >
           <div className="flex flex-col gap-4">
@@ -625,35 +906,88 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                 />
 
                 <section
-                  className={`rounded-lg border p-4 sm:p-5 ${
+                  className={`rounded-3xl border p-5 sm:p-7 ${
                     allStepsComplete
                       ? "border-emerald-300/45 bg-emerald-300/10"
                       : !hasAgentProof || !hasBuild
                         ? "border-amber-300/40 bg-amber-300/5"
-                        : "border-sky-300/45 bg-sky-300/10"
+                        : "border-[var(--accent)]/45 bg-[var(--accent)]/10"
                   }`}
                   id={currentStepDomId}
                 >
+                  {celebration ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="mb-4 flex items-center gap-2 rounded-2xl border border-emerald-300/45 bg-emerald-300/15 px-4 py-3 text-sm font-semibold text-emerald-100"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <Sparkles size={15} className="text-emerald-200" />
+                      {celebration}
+                    </motion.div>
+                  ) : null}
+
                   <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                    <h2 className="min-w-0 break-words text-2xl font-bold leading-tight sm:text-3xl" style={textWrapStyle}>
+                    <h2 className="min-w-0 break-words text-3xl font-bold leading-[1.1] tracking-tight sm:text-4xl" style={textWrapStyle}>
                       {currentStep ? currentStep.title : "Write the result in Jira"}
                     </h2>
-                    <span className="shrink-0 rounded-lg border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-bold text-white/90">
-                      Step {Math.min(currentStepIndex + 1, studentSteps.length || 1)} / {studentSteps.length || 1}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {buildChip ? (
+                        <a
+                          href={buildChip.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={buildChipClassName(buildChip.kind)}
+                          title={buildChipTooltip(buildChip)}
+                        >
+                          {buildChip.pulsing ? (
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${buildChipDotClass(buildChip.kind)} opacity-75`} />
+                              <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${buildChipDotClass(buildChip.kind)}`} />
+                            </span>
+                          ) : (
+                            <span className={`inline-flex h-1.5 w-1.5 rounded-full ${buildChipDotClass(buildChip.kind)}`} />
+                          )}
+                          {buildChip.label}
+                        </a>
+                      ) : null}
+                      {pollEnabled ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPollLastChecked(Date.now());
+                            router.refresh();
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent)]/35 bg-[var(--accent)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--accent-light)] transition-colors hover:border-[var(--accent)]/60 hover:bg-[var(--accent)]/15"
+                          title="Buddy is checking Jira every 30 seconds. Click to refresh now."
+                        >
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--accent-light)] opacity-75" />
+                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--accent-light)]" />
+                          </span>
+                          Live · {pollAgeLabel}
+                        </button>
+                      ) : null}
+                      <span className="rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-white/90">
+                        Step {Math.min(currentStepIndex + 1, studentSteps.length || 1)} / {studentSteps.length || 1}
+                      </span>
+                    </div>
                   </div>
 
-                  <p className="text-base leading-7 text-white">{currentStep?.body || "Add the final PASS or FAIL evidence to Jira."}</p>
+                  <p className="text-lg leading-8 text-white">{currentStep?.body || "Add the final PASS or FAIL result to Jira."}</p>
 
                   {currentStep ? (
-                    <div className="mt-3 grid gap-1.5 text-sm leading-6">
-                      <p className="flex items-start gap-2 text-[var(--muted-strong)]">
-                        <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-300/20 text-[10px] font-bold text-emerald-200">✓</span>
-                        <span><span className="font-semibold text-emerald-100">Pass:</span> {currentStep.pass}</span>
+                    <div className="mt-5 grid gap-2 text-sm leading-6">
+                      <p className="flex items-start gap-2.5 text-[var(--muted-strong)]">
+                        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-300/25 text-xs font-bold text-emerald-200">✓</span>
+                        <span><span className="font-semibold text-emerald-100">You&apos;ll know it worked when:</span> {currentStep.pass}</span>
                       </p>
-                      <p className="flex items-start gap-2 text-[var(--muted-strong)]">
-                        <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-300/20 text-[10px] font-bold text-red-200">✗</span>
-                        <span><span className="font-semibold text-red-100">Fail:</span> {currentStep.fail}</span>
+                      <p className="flex items-start gap-2.5 text-[var(--muted-strong)]">
+                        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-300/25 text-xs font-bold text-red-200">✗</span>
+                        <span><span className="font-semibold text-red-100">Something&apos;s off if:</span> {currentStep.fail}</span>
                       </p>
                     </div>
                   ) : null}
@@ -673,8 +1007,12 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         onClick={async () => {
                           await copyToClipboard("kickoff-codex", data.codingAgentPrompt);
                           openCodex();
+                          if (studentSteps[0]) {
+                            const stepOneKey = studentStepKey(0, studentSteps[0].title);
+                            setChecks((current) => ({ ...current, [stepOneKey]: true }));
+                          }
                         }}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
                         title="Copies the full prompt + opens Codex (desktop app on Mac/PC, web on mobile). Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-codex" && copyResult.status === "copied" ? (
@@ -694,8 +1032,12 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         onClick={async () => {
                           await copyToClipboard("kickoff-claude", data.codingAgentPrompt);
                           openClaude();
+                          if (studentSteps[0]) {
+                            const stepOneKey = studentStepKey(0, studentSteps[0].title);
+                            setChecks((current) => ({ ...current, [stepOneKey]: true }));
+                          }
                         }}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200"
                         title="Copies the full prompt + opens Claude (desktop app on Mac/PC, web on mobile). Paste into a new chat."
                       >
                         {copyResult?.id === "kickoff-claude" && copyResult.status === "copied" ? (
@@ -718,7 +1060,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       <button
                         type="button"
                         onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
-                        className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200 sm:w-auto"
+                        className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200 sm:w-auto"
                       >
                         <Check size={17} strokeWidth={3} />
                         Mark this step done
@@ -729,24 +1071,6 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   {/* Secondary actions */}
                   {(!hasAgentProof || statusCard.localNote) ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      {!hasAgentProof && agentUpdateTemplate ? (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await copyToClipboard(agentUpdateTemplate.id, agentUpdateTemplate.body);
-                            window.open(data.issueUrl, "_blank", "noopener,noreferrer");
-                          }}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-black/20 px-3 text-xs font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
-                          title="Copies a small format template + opens Jira so you can paste it as a comment."
-                        >
-                          {copyResult?.id === agentUpdateTemplate.id && copyResult.status === "copied" ? (
-                            <Check size={13} className="text-emerald-300" />
-                          ) : (
-                            <Clipboard size={13} />
-                          )}
-                          Send result template to Jira
-                        </button>
-                      ) : null}
                       {statusCard.localNote ? (
                         <button
                           type="button"
@@ -786,7 +1110,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                         title="Tick this only if you've genuinely completed this step"
                       >
                         <Check size={12} />
-                        Tick anyway
+                        Mark done anyway
                       </button>
                     ) : null}
                   </div>
@@ -807,7 +1131,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   ) : null}
                 </section>
 
-                <div className="rounded-lg border border-[var(--border)] bg-black/20 p-4">
+                <div className="rounded-2xl border border-[var(--border)] bg-black/20 p-5">
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <span className="text-sm font-bold text-white">Progress</span>
                     <span className="text-sm font-bold text-[var(--accent-light)]">{progress}%</span>
@@ -820,11 +1144,11 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       return (
                         <div
                           key={label}
-                          className={`rounded-lg border p-3 text-sm font-bold ${
+                          className={`rounded-xl border p-3.5 text-sm font-bold ${
                             done
                               ? "border-emerald-300/35 bg-emerald-300/10 text-emerald-100"
                               : active
-                                ? "border-sky-300/50 bg-sky-300/10 text-white"
+                                ? "border-[var(--accent)]/50 bg-[var(--accent)]/15 text-white"
                                 : "border-[var(--border)] bg-black/20 text-[var(--muted-strong)]"
                           }`}
                         >
@@ -855,17 +1179,17 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       key={key}
                       type="button"
                       onClick={() => setChecks((current) => ({ ...current, [key]: !checked }))}
-                      className={`grid scroll-mt-28 grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg border p-3 text-left transition-colors ${
+                      className={`grid scroll-mt-28 grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-2xl border p-4 text-left transition-colors ${
                         checked
                           ? "border-emerald-300 bg-emerald-300/15"
                           : isCurrentStep
-                            ? "border-sky-300/45 bg-sky-300/10"
+                            ? "border-[var(--accent)]/45 bg-[var(--accent)]/10"
                             : "border-[var(--border)] bg-black/20 hover:border-[var(--border-strong)]"
                       }`}
                     >
                       <span
-                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-sm font-bold ${
-                          checked ? "border-emerald-300 bg-emerald-300 text-black" : isCurrentStep ? "border-sky-300 bg-sky-300/10 text-white" : "border-[var(--border-strong)] bg-white/5 text-[var(--muted-strong)]"
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-sm font-bold ${
+                          checked ? "border-emerald-300 bg-emerald-300 text-black" : isCurrentStep ? "border-[var(--accent)] bg-[var(--accent)]/15 text-white" : "border-[var(--border-strong)] bg-white/5 text-[var(--muted-strong)]"
                         }`}
                         aria-hidden="true"
                       >
@@ -876,7 +1200,13 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                           {step.title}
                         </span>
                         <span className="mt-1 block text-sm leading-6 text-[var(--muted-strong)]">
-                          {checked ? "Done. Tap to undo." : isCurrentStep ? "Open above." : "Coming next."}
+                          {checked
+                            ? index === 0 && !hasAgentProof
+                              ? "Sent. Waiting for the AI to post back."
+                              : index === 1 && !hasBuild
+                                ? "Confirmed. Refresh when Jira names the build."
+                                : "Done. Tap to undo."
+                            : isCurrentStep ? "Open above." : "Coming next."}
                         </span>
                       </span>
                     </button>
@@ -894,7 +1224,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
       {ready && data ? (
         <section className="px-4 pb-14 sm:px-6 lg:px-8">
           <div className="mx-auto grid w-full min-w-0 max-w-[calc(100vw-2rem)] gap-3 sm:max-w-7xl" style={viewportWidthStyle}>
-            <DisclosurePanel title="What this ticket needs" icon={<Sparkles size={18} />}>
+            <DisclosurePanel title="What this fix is about" icon={<Sparkles size={18} />}>
               <div className="grid gap-4 lg:grid-cols-3">
                 <div className="rounded-lg border border-[var(--border)] bg-black/20 p-4 lg:col-span-2">
                   <p className="text-lg font-bold text-white">{workRecipe.kind}</p>
@@ -910,7 +1240,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               </div>
             </DisclosurePanel>
 
-            <DisclosurePanel title="Can this be done in simulator?" icon={<MonitorSmartphone size={18} />}>
+            <DisclosurePanel title="Where do I need to test this?" icon={<MonitorSmartphone size={18} />}>
               <p className="text-sm leading-6 text-[var(--muted-strong)]">{surfaceSummary}</p>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 {surfaceCards.map((note) => {
@@ -934,68 +1264,19 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               </div>
             </DisclosurePanel>
 
-            <DisclosurePanel title="Prompt for coding agent" icon={<Bot size={18} />}>
+            <DisclosurePanel title="See the AI's instructions for this ticket" icon={<Bot size={18} />}>
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="max-w-2xl text-sm leading-6 text-[var(--muted-strong)]">
-                  Copy this into a fresh coding agent. It is rebuilt from the live Jira ticket, verification surfaces, proof recipe,
-                  linked issues, and the current human test plan.
-                </div>
+                <p className="max-w-2xl text-sm leading-6 text-[var(--muted-strong)]">
+                  This is what gets copied when you tap Send to Codex or Send to Claude — the full briefing the AI reads before it touches the code.
+                </p>
                 <CopyButton
                   status={copyResult?.id === "agent-prompt" ? copyResult.status : undefined}
                   onClick={() => copyToClipboard("agent-prompt", data.codingAgentPrompt)}
                 />
               </div>
-              <pre className="max-h-[440px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-black/40 p-4 text-sm leading-6 text-[var(--muted-strong)] [overflow-wrap:anywhere]">
+              <pre className="max-h-[440px] overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-[var(--border)] bg-black/40 p-4 text-sm leading-6 text-[var(--muted-strong)] [overflow-wrap:anywhere]">
                 {data.codingAgentPrompt}
               </pre>
-            </DisclosurePanel>
-
-            <DisclosurePanel title="Templates for testers (John/Tay)" icon={<Clipboard size={18} />}>
-              <p className="mb-3 text-sm leading-6 text-[var(--muted-strong)]">
-                What you paste into Jira after testing on a real device.
-              </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                {data.commentTemplates
-                  .filter((template) => template.audience === "human")
-                  .map((template) => (
-                    <div key={template.id} className="rounded-lg border border-[var(--border)] bg-black/20 p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h3 className="min-w-0 font-bold">{template.title}</h3>
-                        <CopyButton
-                          status={copyResult?.id === template.id ? copyResult.status : undefined}
-                          onClick={() => copyToClipboard(template.id, template.body)}
-                        />
-                      </div>
-                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/35 p-3 text-xs leading-5 text-[var(--muted-strong)] [overflow-wrap:anywhere]">
-                        {template.body}
-                      </pre>
-                    </div>
-                  ))}
-              </div>
-            </DisclosurePanel>
-
-            <DisclosurePanel title="Templates for the coding agent" icon={<Bot size={18} />}>
-              <p className="mb-3 text-sm leading-6 text-[var(--muted-strong)]">
-                Send these to the agent, or paste them into Jira on the agent&apos;s behalf. You usually do not need to read them yourself.
-              </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                {data.commentTemplates
-                  .filter((template) => template.audience === "agent")
-                  .map((template) => (
-                    <div key={template.id} className="rounded-lg border border-[var(--border)] bg-black/20 p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h3 className="min-w-0 font-bold">{template.title}</h3>
-                        <CopyButton
-                          status={copyResult?.id === template.id ? copyResult.status : undefined}
-                          onClick={() => copyToClipboard(template.id, template.body)}
-                        />
-                      </div>
-                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/35 p-3 text-xs leading-5 text-[var(--muted-strong)] [overflow-wrap:anywhere]">
-                        {template.body}
-                      </pre>
-                    </div>
-                  ))}
-              </div>
             </DisclosurePanel>
 
             <DisclosurePanel title="Technical Jira fields" icon={<FileText size={18} />}>
@@ -1197,16 +1478,16 @@ function DisclosurePanel({
   children: ReactNode;
 }) {
   return (
-    <details className="group rounded-lg border border-[var(--border-strong)] bg-[var(--card-bg)] p-4">
+    <details className="group rounded-2xl border border-[var(--border-strong)] bg-[var(--card-bg)] p-5">
       <summary className="flex cursor-pointer list-none items-center gap-3 text-left">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/15 text-[var(--accent-light)]">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-[var(--accent-light)]">
           {icon}
         </span>
         <span className="min-w-0 flex-1 text-lg font-bold text-white">{title}</span>
-        <span className="rounded-lg border border-[var(--border)] bg-black/20 px-3 py-2 text-sm font-semibold text-[var(--muted-strong)] group-open:hidden">
+        <span className="rounded-full border border-[var(--border)] bg-black/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted-strong)] group-open:hidden">
           Open
         </span>
-        <span className="hidden rounded-lg border border-[var(--border)] bg-black/20 px-3 py-2 text-sm font-semibold text-[var(--muted-strong)] group-open:inline-flex">
+        <span className="hidden rounded-full border border-[var(--border)] bg-black/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted-strong)] group-open:inline-flex">
           Close
         </span>
       </summary>
@@ -1424,7 +1705,7 @@ function TicketHeaderStrip({
   }, [open]);
 
   return (
-    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-black/20 px-3 py-2">
+    <div className="flex min-w-0 items-center gap-2 rounded-2xl border border-[var(--border)] bg-black/20 px-4 py-2.5">
       <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--accent)]/15 px-2 py-1 text-xs font-bold text-[var(--accent-light)]">
         <TicketCheck size={13} />
         {issueKey}
@@ -1600,7 +1881,7 @@ function BuddySuggestionStrip({
   return (
     <div
       ref={containerRef}
-      className="relative flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/5 px-3 py-2"
+      className="relative flex min-w-0 flex-wrap items-center gap-2 rounded-2xl border border-[var(--accent)]/25 bg-[var(--accent)]/5 px-4 py-3"
     >
       <Sparkles size={14} className="shrink-0 text-[var(--accent-light)]" />
       <span className="min-w-0 flex-1 truncate text-sm text-white">
