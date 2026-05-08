@@ -31,3 +31,26 @@ export function shortTestInstruction(value: string, workKind: string, applyTrack
 
   return capitalizeFirst(cleaned);
 }
+
+// Pull the first paragraph (or first ~280 chars) out of a Jira ticket
+// description so we can use it as a test guide when the AI didn't post a
+// formal plan. Strips heading-like all-caps lines and trims trailing junk.
+export function descriptionExcerpt(descriptionText: string): string {
+  if (!descriptionText) return "";
+  const paragraphs = descriptionText
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\s+/g, " ").trim())
+    .filter((p) => p.length > 0);
+  // Prefer the first paragraph that reads like prose, not a heading.
+  const firstProse = paragraphs.find(
+    (p) => p.length > 40 && !/^(Symptom|Root cause|Repro|Expected)\b/i.test(p.split(/[:.]/)[0] || ""),
+  );
+  const candidate = firstProse || paragraphs[0] || "";
+  if (!candidate) return "";
+  if (candidate.length <= 280) return candidate;
+  // Cut at the first sentence boundary inside the budget.
+  const truncated = candidate.slice(0, 280);
+  const lastStop = Math.max(truncated.lastIndexOf(". "), truncated.lastIndexOf("? "), truncated.lastIndexOf("! "));
+  return (lastStop > 80 ? truncated.slice(0, lastStop + 1) : `${truncated.trim()}…`).trim();
+}

@@ -30,7 +30,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ChecklistViewModel, JiraChecklistResult } from "@/lib/mvp-ticket-checklist";
-import { capitalizeFirst, findManualBugStep, shortTestInstruction } from "@/lib/checklist-helpers";
+import { capitalizeFirst, descriptionExcerpt, findManualBugStep, shortTestInstruction } from "@/lib/checklist-helpers";
 
 type AccessState = {
   status: "access-required" | "access-misconfigured";
@@ -297,6 +297,10 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
   const stageLower = (data.customFields.loopStage || "").toLowerCase();
   // "Not started" = the ticket exists but no AI has picked it up yet.
   // "In flight" = an AI is mid-work but hasn't posted a summary.
+  // "AI done, no formal plan" = ticket already merged (Verifying/Done) but
+  // the agent never posted a structured "Agent Test Update" comment, so we
+  // can't show the AI's plan — but the ticket description is still the best
+  // test guide we have.
   const notStarted = !plan.agentUpdate.found && (
     statusLower === "to do" ||
     statusLower === "open" ||
@@ -308,6 +312,12 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     stageLower.includes("selected") ||
     stageLower.includes("reproducing") ||
     stageLower.includes("acceptance")
+  );
+  const aiDoneNoFormalPlan = !plan.agentUpdate.found && (
+    statusLower === "verifying" ||
+    statusLower === "done" ||
+    statusLower === "in review" ||
+    statusLower === "ready for review"
   );
 
   if (plan.canAgentFinishAlone) {
@@ -357,24 +367,32 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     {
       title: plan.agentUpdate.found
         ? "Read what the AI tested"
-        : notStarted
-          ? "Send this to an AI to start"
-          : "AI is still coding this",
+        : aiDoneNoFormalPlan
+          ? "AI's done — no formal test plan was posted"
+          : notStarted
+            ? "Send this to an AI to start"
+            : "AI is still coding this",
       body: plan.agentUpdate.found
         ? "The AI's summary is below — you don't need to leave Buddy. It tells you what changed, the build to install, and the exact thing to look for on your phone."
-        : notStarted
-          ? "No AI has picked this up yet. Tap a green button below to send the prompt to Codex or Claude — the AI will do the coding and post a summary back to Jira."
-          : "An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
+        : aiDoneNoFormalPlan
+          ? "The fix is merged but nobody posted a structured 'Agent Test Update' comment. Use the ticket description (and your judgment) as the test guide. Step 3 below pulls it through."
+          : notStarted
+            ? "No AI has picked this up yet. Tap a green button below to send the prompt to Codex or Claude — the AI will do the coding and post a summary back to Jira."
+            : "An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
       pass: plan.agentUpdate.found
         ? "The summary below has real commands or a build number — not [Passed / Failed] placeholders."
-        : notStarted
-          ? "After you send it: an AI takes the prompt, does the work, and posts a summary in Jira."
-          : "The AI's summary appears in Jira with real values, not template placeholders.",
+        : aiDoneNoFormalPlan
+          ? "You've read the ticket description and you understand what changed."
+          : notStarted
+            ? "After you send it: an AI takes the prompt, does the work, and posts a summary in Jira."
+            : "The AI's summary appears in Jira with real values, not template placeholders.",
       fail: plan.agentUpdate.found
         ? "The summary is vague, missing the build, or still has [Passed / Failed] placeholders."
-        : notStarted
-          ? "Nobody picked it up, or they posted without filling the template properly."
-          : "No summary yet, or it still has unfilled [Passed / Failed] placeholders.",
+        : aiDoneNoFormalPlan
+          ? "The ticket description doesn't have enough info to test it. Reopen with what's missing."
+          : notStarted
+            ? "Nobody picked it up, or they posted without filling the template properly."
+            : "No summary yet, or it still has unfilled [Passed / Failed] placeholders.",
     },
     {
       title: buildOrCommit ? "Install the right build" : "Wait for the new TestFlight build",
@@ -388,10 +406,19 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
       title: "Try the bug once",
       // When the AI gave us a plan, lean on it — the user is testing what the
       // AI wrote, not a generic track template. The full plan lives in step 1's
-      // panel; we keep step 3 short so this card stays scannable.
+      // panel; we keep step 3 short so this card stays scannable. If the AI
+      // never posted a plan but the ticket is already in Verifying/Done, fall
+      // back to the ticket description's first paragraph — it's the user's
+      // best in-Buddy test guide.
       body: aiPhoneInstruction
         ? `${shortTestInstruction(aiPhoneInstruction, workKind)} ${aiPhonePlan.length > 1 ? "Full plan in step 1's panel above." : ""}`.trim()
-        : shortTestInstruction(phoneStep?.doThis || data.recommendedAction.steps[0] || "Run the test written on Jira.", workKind),
+        : shortTestInstruction(
+            phoneStep?.doThis ||
+              data.recommendedAction.steps[0] ||
+              (aiDoneNoFormalPlan ? descriptionExcerpt(data.descriptionText) : "") ||
+              "Run the test written on Jira.",
+            workKind,
+          ),
       pass: capitalizeFirst(
         aiPhonePassHint || phoneStep?.passMeans || "The bug no longer happens.",
       ),
@@ -2169,7 +2196,9 @@ function BuddySuggestionStrip({
           : state.status === "error"
             ? state.message
             : !top
-              ? "Nothing is ready to verify right now."
+              ? currentIssueKey
+                ? `Queue is empty — you're testing ${currentIssueKey} on your own.`
+                : "Nothing is ready to verify right now."
               : onTop
                 ? `You're on Buddy's #1 pick. ${rows.length - 1} more ready.`
                 : (
