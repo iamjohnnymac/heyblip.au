@@ -572,32 +572,120 @@ session:
   state. `git worktree add ../<name> -b feat/<name>`, do the work,
   `git worktree remove --force` at the end.
 
-## Final state checklist (end of session 2026-05-13)
+## Late-session sprint: command-centre features shipped
 
-- [x] 66 Agent Test Update comments posted to Verifying tickets
+After the handover was first updated to end-of-session state, John
+asked for the two next-ship features in one push:
+
+### 22 more Agent Test Updates posted
+
+Three parallel batch agents (`a13a0a8…` 8 tickets, `a8704741…` 7
+tickets, `a8773e1…` 7 tickets) backfilled every In Progress + Verifying
+ticket that lacked a structured comment — 22 in total. Mix:
+
+- **2 Verifying** (BDEV-490, BDEV-416): full test plans, `passed` /
+  `build 65` / `yes`. John's actual ready-to-test pile.
+- **20 In Progress** (BDEV-489, 477, 419, 413, 412, 410, 409, 407,
+  405, 378, 366, 365, 363, 362, 361, 360, 359, 353, 253, 250):
+  preview-style summaries, `inconclusive` / `pending` / `not yet —
+  AI work in flight`. The Human test requested list pulls from each
+  ticket's acceptance criteria.
+
+Same MCP response-crossing oddity surfaced again on BDEV-359 (Batch C)
+and BDEV-366 (Batch B) — Atlassian MCP `addCommentToJiraIssue` returns
+a payload echoing a different ticket's body, but the actual write
+lands correctly. Verified post-hoc both times. Worth a bug report to
+the MCP server maintainer — three different agent sessions independently
+observed it.
+
+### Generate AI Summary button + "Not yet picked up" backlog section
+
+Single PR built in a fresh worktree (`heyblip-au-fork-features` on
+`feat/generate-summary-and-backlog-section`, now removed). Two commits:
+
+- **`826960d`** — `feat(buddy): add Generate AI Summary button + API for ticketless summaries`
+  - New `src/app/api/mvp-ticket-checklist/generate-summary/route.ts` (+262 LOC) mirrors the Findings/Verdict route shape: fetch ticket from Jira → Claude Sonnet 4.6 over OpenRouter → post the drafted Agent Test Update comment → return success. Idempotent — returns 409 if a summary already exists. 30s in-memory dedup cache keyed on issueKey.
+  - New `src/app/mvp-ticket-checklist/_components/GenerateSummaryButton.tsx` (+157 LOC) — purple pill with sparkles icon, state machine (idle → submitting → done → error), success banner with auto-fade + `router.refresh()`.
+  - New `src/lib/generate-summary-prompt.ts` (+176 LOC) — pure helpers for prompt building. Status-aware: `Verifying` tickets get `passed`/`build 65` framing; In Progress tickets get `inconclusive`/`pending`/preview framing.
+  - New `src/lib/generate-summary-prompt.test.mjs` (+207 LOC) — 17 tests covering the prompt-building helpers + JSON response parsing.
+  - Visible on the detail page where the AgentTestSummary fallback used to render.
+  - Visible on the queue page as a `✨ Generate` pill replacing the "No AI summary yet" muted pill on every card lacking a summary. Card-internal click that `stopPropagation()`s so the surrounding link doesn't navigate.
+
+- **`fb37d21`** — `feat(buddy): surface 'Not yet picked up' backlog section in /queue`
+  - `src/lib/ticket-queue.ts:buildQueueJql()` loosened to `status in ("To Do", "In Progress", "Verifying", "Selected")`. `isTestable()` updated so the 3 original sections still exclude To Do — backlog is a 4th bucket.
+  - `src/app/queue/QueueClient.tsx` added a 4th section after "Waiting to start" (urgency-descending order). Section dot is muted purple (`bg-[var(--accent)]/60`), tagline "Sitting in the backlog · AI hasn't started".
+  - New filter chip "Backlog (N)" alongside "Ready for me", "Launch blockers", etc.
+  - The new section's cards all carry the Generate pill from feature 1 — naturally ties the two features together.
+
+Build agent's design decisions (all flagged in the report, all sound):
+1. Backlog placement at bottom (urgency-descending order — testable first)
+2. Muted-purple dot (signal continuity, not a fourth distinct colour)
+3. `QueueCard` restructure: `<article>` + absolute sibling `<Link>` instead of `<Link>` wrapping a `<button>` (invalid HTML otherwise; needed for `stopPropagation` on the Generate pill)
+4. Generate button gated to Verifying / In Progress / In Review / Ready statuses on the detail page (matches "for To Do the existing Send to Codex/Claude flow handles it" — but To Do cards still trigger Generate via the queue pill)
+
+### Merge + deploy
+
+Single `--no-ff` merge of `feat/generate-summary-and-backlog-section`
+into the Buddy branch, resolved as `29e17b1`. 81/81 tests pass, tsc
+clean, lint clean (one pre-existing `_NODE_R_BASE` warning), next
+build succeeds. Pushed + deployed via `npx vercel deploy --prod
+--yes --token=...`, aliased to orcin in ~40s.
+
+### End-to-end verification
+
+- ✅ Queue page now shows **50 tickets across testing · 2 ready for
+  you** (up from 23 — the 27 backlog tickets that were filtered out
+  before now surface)
+- ✅ New "Backlog (27)" filter chip present alongside the others
+- ✅ "Not yet picked up · 27 tickets · Sitting in the backlog · AI
+  hasn't started" section renders below "Waiting to start"
+- ✅ Every backlog card shows the `✨ Generate` purple pill (replaces
+  the muted "No AI summary yet" pill)
+- ✅ Generate flow verified live: `fetch('/api/.../generate-summary',
+  {issueKey: 'BDEV-252'})` → Sonnet drafted → Jira comment 10449
+  posted → queue refresh → BDEV-252's pill swapped from `Generate` to
+  green `AI summary`
+- ✅ Worktree `heyblip-au-fork-features` removed, feature branch
+  `feat/generate-summary-and-backlog-section` deleted
+
+### One pre-existing issue noticed (not introduced by today's work)
+
+The loosened JQL surfaces some BDEV **Epics** as cards in the backlog
+(BDEV-380 Push Notifications, BDEV-382 Auth & Identity, BDEV-383 Chat
+Experience, BDEV-385, BDEV-386, BDEV-387, BDEV-381). Epics shouldn't
+be in the testing queue — they're containers, not test items. Needs
+an `issuetype != Epic` filter added to `buildQueueJql()`. ~5 LOC fix
+when convenient. Flagged for the next session.
+
+## Final state checklist (end of session 2026-05-13 ~14:30 AWST)
+
+- [x] 66 + 22 = **88 Agent Test Updates** posted to Verifying + In
+      Progress tickets via 6 batch agent runs total
 - [x] Findings + AI verdict + close-or-reopen feature live
 - [x] Kimi → Haiku rename + sanitisation drop live
 - [x] Mark Done success banner + step-button clarity + always-on
       Mark-done-anyway live
 - [x] Surface chip 4-state classifier live
 - [x] PR #2 merged on fork; main now reflects production
-- [x] `/queue` page built + merged + deployed (commit `2a18af2`,
-      merged into main as `6017177`)
-- [x] Detail page rebuild built + merged + deployed (commit `57feb37`,
-      merged into main as `6017177`; `MvpTicketChecklistClient.tsx`
-      shrunk 3020 → 1522 LOC)
-- [x] Two end-of-session nesting fixes deployed (`1d3c5c5` outer
-      panels, `195a8eb` per-result items)
-- [x] Worktrees removed, feature branches deleted
-- [x] End-to-end Chrome verification on desktop + mobile
-- [ ] (next ship) **"Generate AI Summary" button** — on-demand AI
-      Summary generation for tickets that lack one. ~2-3 hours, single
-      build agent.
-- [ ] (small follow-up after #1) Loosen queue JQL to include `To Do`
-      status, add "Not yet picked up" 4th section. ~20 LOC.
+- [x] `/queue` page built + merged + deployed
+- [x] Detail page rebuild built + merged + deployed
+      (`MvpTicketChecklistClient.tsx` 3020 → 1522 LOC)
+- [x] Detail page nesting fixes deployed
+- [x] **Generate AI Summary button live** (detail page + queue cards)
+- [x] **"Not yet picked up" backlog section live** (27 cards visible)
+- [x] End-to-end verification on the Generate flow (BDEV-252 confirmed)
+- [x] All worktrees removed, all feature branches deleted
+- [ ] (small follow-up) Filter `issuetype != Epic` from queue JQL so
+      Epics stop appearing in the backlog section. ~5 LOC.
+- [ ] (small follow-up) Triage stalled In Progress tickets — JQL for
+      `updated < -30d AND status = "In Progress"`, flag ones that look
+      truly abandoned vs ones with recent activity, propose closes
 - [ ] (open) rotate the Vercel token used this session
       (`vcp_2wdlx11BFSHm…`)
-- [ ] (open) delete BDEV-352 E2E test comment (cosmetic)
+- [ ] (open) delete BDEV-352 E2E test comment (cosmetic, harmless)
+- [ ] (open) delete BDEV-252 verification-test comment from the
+      Generate flow smoke test (commentId 10449 — also harmless,
+      mark it as a test artefact if leaving it)
 - [ ] (open) add upstream Jira automation rule for BDEV-493-style
       status drift (PR opened → To Do → In Progress)
 - [ ] (open from 2026-05-08) `GITHUB_TOKEN` → fine-grained PAT
@@ -608,7 +696,10 @@ session:
 
 That's it. Read `docs/buddy-pm-handover-2026-05-08.md` for older
 context, then `docs/blip-test-buddy-agent-handoff.md` for product
-spec. The session ended with John framing Buddy as a future "command
-centre for the project" — the natural next ships are the Generate AI
-Summary button + the To Do backlog section, both grounded in the same
-plumbing already in place.
+spec. The session ended with **all command-centre primitives in
+place**: bird's-eye queue with 4 grouped sections including backlog,
+detail page redesigned to one calm focus card per step, on-demand
+Generate AI Summary button for any ticket lacking one, full
+Findings → Sonnet verdict → Jira close-or-reopen loop. Same
+architecture (Jira fetch → Sonnet → Jira write → render) unlocks
+the next feature, whatever it is.
