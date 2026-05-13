@@ -1141,9 +1141,14 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
     isStep4 && findingsState.kind === "ready" && transitionState.kind !== "done";
 
   return (
-    <main className="mesh-gradient min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+    // min-w-0 + w-full + overflow-x-hidden so the page can't be
+    // horizontally scrolled by accidentally-wide content (long SHAs,
+    // diagnostic strings, etc.). body is `flex flex-col` so main is a
+    // flex item with default min-width:auto — without min-w-0 it
+    // expands to its content's min-content width on narrow phones.
+    <main className="mesh-gradient min-h-screen w-full min-w-0 overflow-x-hidden bg-[var(--background)] text-[var(--foreground)]">
       <div
-        className={`mx-auto max-w-4xl px-4 sm:px-6 pt-5 ${
+        className={`mx-auto w-full min-w-0 max-w-4xl px-4 sm:px-6 pt-5 ${
           stickyBarActive ? "pb-32 md:pb-12" : "pb-12"
         }`}
       >

@@ -273,13 +273,15 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
   }
 
   return (
-    // overflow-x-hidden is a defensive clip — the chip row uses
-    // -mx-2 + overflow-x-auto for intentional inner horizontal scroll
-    // but on a narrow phone any other accidental wide content (long
-    // SHAs, untranslated copy, etc.) would otherwise push the page
-    // wider than the viewport. Containing horizontal scroll to where
-    // it's designed keeps the page from yo-yo-ing on touch.
-    <main className="mx-auto max-w-7xl overflow-x-hidden px-5 py-8 sm:px-8 sm:py-10">
+    // min-w-0 + w-full belt-and-braces: body is `flex flex-col` so
+    // main is a flex item, and flex items default to `min-width: auto`
+    // which prevents them from shrinking below their content's min-
+    // content width. On a narrow phone that meant the chip row's
+    // intrinsic min width was making MAIN itself 80px wider than the
+    // viewport — overflow-x-hidden on its children wasn't enough.
+    // overflow-x-hidden then keeps any future accidental wide content
+    // from re-opening a horizontal page scroll.
+    <main className="mx-auto w-full min-w-0 max-w-7xl overflow-x-hidden px-5 py-8 sm:px-8 sm:py-10">
       <Header
         total={rows.length}
         readyCount={counts.ready}
