@@ -15,7 +15,20 @@ type SurfaceState = "passed" | "failed" | "na" | "not-run";
 export function classifySurfaceResult(value: string): SurfaceState {
   const v = (value || "").toLowerCase().trim();
   if (!v) return "not-run";
-  if (/\b(fail(ed|s|ure)?|broken|blocked|red\b|error)\b/.test(v)) return "failed";
+
+  const failMatch = v.match(/\b(fail(ed|s|ure)?|broken|blocked|red\b|error)\b/);
+  const passMatch = v.match(/\b(passed|all green|all good)\b/);
+
+  // Agents commonly write headline-first reports like
+  // "passed: 9 files, 133 tests. Attempted xcodebuild but toolchain blocked"
+  // — the earlier signal is the actual surface result, the later "blocked"
+  // is just explaining a side detail. Whichever appears first wins.
+  if (failMatch && passMatch) {
+    return (passMatch.index ?? Infinity) < (failMatch.index ?? Infinity) ? "passed" : "failed";
+  }
+  if (failMatch) return "failed";
+  if (passMatch) return "passed";
+
   if (
     /^n\.?\/?a\b|\bnot applicable\b|\bnot required\b|\bnot needed\b|\bno .{0,40}(needed|required|changed?)\b|client-side.+only|server-side.+only/.test(
       v,

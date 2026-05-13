@@ -46,9 +46,6 @@ export function AskBuddyInline({
             <span className="inline-flex items-center gap-1 rounded-md border border-sky-300/25 bg-sky-300/10 px-2 py-0.5 font-bold text-sky-100">
               {sourceLabel}
             </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-300/25 bg-emerald-300/10 px-2 py-0.5 font-bold text-emerald-100">
-              Private ticket details hidden
-            </span>
           </div>
           <p
             className="mt-3 break-words text-sm leading-6 text-[var(--muted-strong)]"
