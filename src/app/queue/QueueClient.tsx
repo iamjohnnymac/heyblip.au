@@ -60,7 +60,6 @@ type FilterKey =
   | "ready"
   | "backlog"
   | "launch-blockers"
-  | "has-ai-summary"
   | "high-priority";
 
 // ── Grouping helpers ─────────────────────────────────────────────────
@@ -116,8 +115,6 @@ function matchesFilter(row: QueueRowView, filter: FilterKey): boolean {
       return isBacklog(row);
     case "launch-blockers":
       return row.labels.some((label) => label.toLowerCase() === "launch-blocker");
-    case "has-ai-summary":
-      return row.hasAgentTestUpdate;
     case "high-priority": {
       const p = row.priority.toLowerCase();
       return p === "highest" || p === "high";
@@ -220,7 +217,6 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
       ready: 0,
       backlog: 0,
       "launch-blockers": 0,
-      "has-ai-summary": 0,
       "high-priority": 0,
     } as Record<FilterKey, number>;
     for (const row of rows) {
@@ -228,7 +224,6 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
       if (isBacklog(row)) result.backlog += 1;
       if (row.labels.some((label) => label.toLowerCase() === "launch-blocker"))
         result["launch-blockers"] += 1;
-      if (row.hasAgentTestUpdate) result["has-ai-summary"] += 1;
       const p = row.priority.toLowerCase();
       if (p === "highest" || p === "high") result["high-priority"] += 1;
     }
@@ -305,8 +300,8 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
               The muted purple dot signals "purple = AI-aware but not yet
               acted on" without competing with the green Ready dot.   */}
           <GroupSection
-            title="Not yet picked up"
-            tagline="Sitting in the backlog · AI hasn't started"
+            title="Not started"
+            tagline="AI hasn't picked these up yet"
             dotClass="bg-[var(--accent)]/60"
             rows={backlogRows}
             accessParam={accessParam}
@@ -426,11 +421,10 @@ function FilterChipRow({
 }) {
   const chips: { key: FilterKey; label: string }[] = [
     { key: "all", label: "All" },
-    { key: "ready", label: "Ready for me" },
-    { key: "backlog", label: "Backlog" },
+    { key: "ready", label: "Ready for you" },
+    { key: "backlog", label: "Not started" },
     { key: "launch-blockers", label: "Launch blockers" },
-    { key: "has-ai-summary", label: "Has AI summary" },
-    { key: "high-priority", label: "Highest / High" },
+    { key: "high-priority", label: "Top priority" },
   ];
   return (
     <div className="mb-8 -mx-2 flex flex-nowrap items-center gap-2 overflow-x-auto px-2 pb-1 sm:flex-wrap sm:overflow-visible">

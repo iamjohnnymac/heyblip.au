@@ -17,7 +17,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Route } from "next";
-import { Loader2, Sparkles } from "lucide-react";
+import { Check, Loader2, Sparkles } from "lucide-react";
 import { shortenShas } from "@/lib/ticket-queue";
 import type { QueueRowView } from "./QueueClient";
 
@@ -159,9 +159,21 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
             Launch blocker
           </span>
         ) : null}
-        {row.hasAgentTestUpdate ? (
-          <span className="inline-flex items-center rounded-full border border-emerald-300/40 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100">
-            AI summary
+        {row.hasAgentTestUpdate && row.hasBuild && row.verifiedBuildOrCommit ? (
+          // Summary + build = AI has shipped real code; this is something
+          // you can actually pick up your phone and verify. Green is the
+          // "go test" signal across the dashboard.
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100">
+            <Check size={11} strokeWidth={3} />
+            Fix in build {shortenShas(row.verifiedBuildOrCommit)}
+          </span>
+        ) : row.hasAgentTestUpdate ? (
+          // Summary but no build = AI's only written a plan (either
+          // Generate-AI-Summary was tapped, or the agent commented without
+          // shipping yet). Amber is the "wait, no real code yet" signal.
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-amber-100">
+            <Sparkles size={11} strokeWidth={3} />
+            Plan only
           </span>
         ) : (
           // No AI summary yet → swap the muted "No AI summary" pill for a
@@ -211,7 +223,10 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
             )}
           </button>
         )}
-        {row.hasBuild && row.verifiedBuildOrCommit ? (
+        {row.hasBuild && row.verifiedBuildOrCommit && !row.hasAgentTestUpdate ? (
+          // Edge case: a build exists but no AI summary has been posted
+          // yet. Keep a separate build pill so the SHA still shows. When a
+          // summary exists, the "Fix in build X" pill above carries it.
           <span className="inline-flex items-center rounded-full border border-sky-300/35 bg-sky-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-sky-100">
             build {shortenShas(row.verifiedBuildOrCommit)}
           </span>
