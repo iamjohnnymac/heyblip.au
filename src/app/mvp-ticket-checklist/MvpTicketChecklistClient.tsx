@@ -412,8 +412,8 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     },
     {
       title: "Try the bug once",
-      body: aiPhoneInstruction
-        ? shortTestInstruction(aiPhoneInstruction, workKind)
+      body: aiFirstItem
+        ? "Walk through the steps below on your phone, in order. The pass/fail criteria above are what to watch for as you go."
         : shortTestInstruction(
             phoneStep?.doThis ||
               data.recommendedAction.steps[0] ||
@@ -1215,9 +1215,17 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   ) : null}
                   <PastHumanTestResultsPanel results={humanTestResults} />
                 </div>
-              ) : currentStepIndex === 1 || currentStepIndex === 2 ? (
+              ) : currentStepIndex === 1 ? (
                 <div className="grid gap-4">
                   <AgentTestSummaryChip agentUpdate={humanTestPlan.agentUpdate} />
+                  <PastHumanTestResultsPanel results={humanTestResults} />
+                </div>
+              ) : currentStepIndex === 2 ? (
+                <div className="grid gap-4">
+                  {/* Step 3 is the action step — show the full numbered
+                      plan inline so the user has the test instructions
+                      right in front of them, no chip to tap. */}
+                  <AgentTestSummaryPanel agentUpdate={humanTestPlan.agentUpdate} />
                   <PastHumanTestResultsPanel results={humanTestResults} />
                 </div>
               ) : (

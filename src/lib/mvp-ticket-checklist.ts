@@ -2059,7 +2059,10 @@ function parseHumanTestRequested(lines: string[]): {
 function buildHumanTestRequestedItem(num: number, raw: string): HumanTestRequestedItem {
   // Detect a leading "Title — body" or "Title: body" so the panel can
   // bold the title without us re-parsing it. Em-dash is the AI's
-  // convention; falls back to the first colon or the first 6 words.
+  // convention; colon is the secondary form. When neither separator is
+  // present, leave title empty and let the chip render the body straight
+  // — the older "first 6 words as title" fallback duplicated content
+  // because the renderer always emits `title — body` when both are set.
   const dashMatch = raw.match(/^([^—:]{1,80}?)\s+—\s+(.+)$/);
   const colonMatch = !dashMatch ? raw.match(/^([^:]{1,80}?):\s+(.+)$/) : null;
   let title = "";
@@ -2070,9 +2073,6 @@ function buildHumanTestRequestedItem(num: number, raw: string): HumanTestRequest
   } else if (colonMatch) {
     title = colonMatch[1].trim();
     body = colonMatch[2].trim();
-  } else {
-    const words = raw.split(/\s+/).slice(0, 6).join(" ");
-    title = words.length < raw.length ? `${words}…` : words;
   }
 
   return {
