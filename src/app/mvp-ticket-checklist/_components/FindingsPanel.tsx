@@ -92,7 +92,7 @@ export function FindingsPanel({
   const buildOrCommit = ready ? state.body.buildOrCommit : "";
 
   return (
-    <div className="rounded-2xl border border-white/15 bg-black/40 p-4 sm:p-5">
+    <div className="mt-5 border-t border-white/10 pt-5">
       <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--accent-light)]">
         <MessageSquareText size={13} />
         Write your findings

@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buddy — Queue overview (mockup)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --fg: #ffffff;
+        --muted: rgba(255, 255, 255, 0.55);
+        --muted-strong: rgba(255, 255, 255, 0.78);
+        --border: rgba(255, 255, 255, 0.08);
+        --border-strong: rgba(255, 255, 255, 0.15);
+        --card: rgba(255, 255, 255, 0.03);
+        --card-hover: rgba(255, 255, 255, 0.055);
+        --accent: #6600ff;
+        --accent-light: #8533ff;
+        --accent-tint: rgba(102, 0, 255, 0.08);
+      }
+      html,
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        border-radius: 999px;
+        padding: 0.4rem 0.85rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        line-height: 1;
+        white-space: nowrap;
+        border: 1px solid var(--border-strong);
+        background: var(--card);
+        color: var(--muted-strong);
+        transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+        min-height: 36px;
+      }
+      .chip:hover {
+        background: var(--card-hover);
+        color: var(--fg);
+      }
+      .chip-active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+      }
+      .chip-count {
+        font-size: 0.68rem;
+        font-weight: 700;
+        background: rgba(255, 255, 255, 0.12);
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+      }
+      .chip-active .chip-count {
+        background: rgba(255, 255, 255, 0.22);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 1.25rem;
+        padding: 1.1rem 1.15rem 1rem;
+        transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+        cursor: pointer;
+        min-height: 168px;
+      }
+      .card:hover {
+        background: var(--card-hover);
+        border-color: var(--border-strong);
+        transform: translateY(-1px);
+      }
+      .card-hover-demo {
+        background: var(--card-hover);
+        border-color: rgba(102, 0, 255, 0.5);
+        box-shadow: 0 12px 36px rgba(102, 0, 255, 0.18);
+        transform: translateY(-1px);
+      }
+      .ticket-key {
+        font-family: "Plus Jakarta Sans", system-ui;
+        font-weight: 800;
+        color: var(--accent-light);
+        font-size: 0.78rem;
+        letter-spacing: 0.02em;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.18rem 0.55rem;
+        font-size: 0.66rem;
+        font-weight: 700;
+        border-radius: 999px;
+        border: 1px solid var(--border-strong);
+        background: var(--card);
+        color: var(--muted-strong);
+        line-height: 1;
+        text-transform: none;
+        letter-spacing: 0.01em;
+      }
+      .pill-priority-highest {
+        color: #ffb4b4;
+        border-color: rgba(255, 100, 100, 0.35);
+        background: rgba(255, 100, 100, 0.08);
+      }
+      .pill-priority-high {
+        color: #ffd089;
+        border-color: rgba(255, 170, 70, 0.32);
+        background: rgba(255, 170, 70, 0.08);
+      }
+      .pill-launch {
+        color: #fff;
+        border-color: rgba(102, 0, 255, 0.55);
+        background: rgba(102, 0, 255, 0.18);
+      }
+      .pill-ai {
+        color: #c4ffd7;
+        border-color: rgba(80, 220, 130, 0.35);
+        background: rgba(80, 220, 130, 0.08);
+      }
+      .pill-blocks {
+        color: #ffd089;
+        border-color: rgba(255, 170, 70, 0.32);
+        background: rgba(255, 170, 70, 0.06);
+      }
+      .pill-build {
+        color: #bcd6ff;
+        border-color: rgba(120, 170, 255, 0.32);
+        background: rgba(120, 170, 255, 0.08);
+      }
+      .group-heading {
+        display: flex;
+        align-items: baseline;
+        gap: 0.65rem;
+        margin-bottom: 1rem;
+      }
+      .group-heading h2 {
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: -0.005em;
+      }
+      .group-heading .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+      }
+      .group-heading .count {
+        color: var(--muted);
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+      .top-pick-banner {
+        background: linear-gradient(
+          135deg,
+          rgba(102, 0, 255, 0.18) 0%,
+          rgba(102, 0, 255, 0.05) 60%,
+          transparent 100%
+        );
+        border: 1px solid rgba(102, 0, 255, 0.35);
+        border-radius: 1.5rem;
+      }
+      .age-text {
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+      .age-stale {
+        color: #ffb988;
+      }
+      .stage-bar {
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        overflow: hidden;
+      }
+      .stage-bar > span {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        border-radius: 999px;
+      }
+      .icon-btn {
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 0.85rem;
+        border: 1px solid var(--border-strong);
+        background: var(--card);
+        color: var(--muted-strong);
+      }
+      .top-divider {
+        height: 1px;
+        background: var(--border);
+      }
+      .legend-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        display: inline-block;
+      }
+      .summary-line {
+        line-height: 1.35;
+        font-weight: 600;
+        font-size: 0.95rem;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .reason-line {
+        font-size: 0.79rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      ::selection {
+        background: var(--accent);
+        color: white;
+      }
+      /* Mobile collapse: single column, generous spacing, no horizontal scroll. */
+      @media (max-width: 768px) {
+        .group-grid {
+          grid-template-columns: 1fr !important;
+        }
+        .top-bar {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 0.85rem;
+        }
+        .filters-row {
+          width: 100%;
+          overflow-x: auto;
+          padding-bottom: 0.4rem;
+          flex-wrap: nowrap;
+        }
+        .filters-row::-webkit-scrollbar {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <div class="mx-auto max-w-7xl px-5 sm:px-8 py-8 sm:py-10">
+      <!-- ── Top bar ─────────────────────────────────────────── -->
+      <header class="top-bar flex items-center justify-between gap-4 mb-7">
+        <div class="flex items-center gap-3 min-w-0">
+          <div
+            class="h-9 w-9 rounded-2xl flex items-center justify-center"
+            style="background: var(--accent)"
+          >
+            <span class="font-extrabold text-white text-lg leading-none">B</span>
+          </div>
+          <div class="min-w-0">
+            <h1 class="text-xl sm:text-2xl font-extrabold tracking-tight truncate">
+              Buddy queue
+            </h1>
+            <p class="text-sm" style="color: var(--muted)">
+              22 tickets across testing
+              <span class="mx-1.5">·</span>
+              7 ready for you
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="icon-btn" aria-label="Refresh queue">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+          </button>
+          <a
+            href="#"
+            class="hidden sm:inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 h-11 text-sm font-semibold hover:bg-white/[0.06]"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            Open Jira
+          </a>
+        </div>
+      </header>
+
+      <!-- ── Top pick banner ─────────────────────────────────── -->
+      <section class="top-pick-banner p-5 sm:p-6 mb-7">
+        <div class="flex items-start sm:items-center gap-4 flex-col sm:flex-row">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1.5" style="color: var(--accent-light)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+              <span class="text-xs font-bold tracking-wide uppercase">Buddy suggests next</span>
+            </div>
+            <p class="text-lg sm:text-xl font-bold leading-snug">
+              <span class="ticket-key text-base mr-1">BDEV-260</span>
+              Two-phone push reliability — relay path goes silent after 30s background
+            </p>
+            <p class="reason-line mt-1.5">
+              Sitting 430h — getting stale · Blocks 2 other tickets · Has AI summary · build 65
+            </p>
+          </div>
+          <a
+            href="#"
+            class="shrink-0 inline-flex items-center justify-center gap-2 rounded-2xl px-5 h-12 font-bold text-white"
+            style="background: var(--accent)"
+            onmouseover="this.style.background='var(--accent-light)'"
+            onmouseout="this.style.background='var(--accent)'"
+          >
+            Open BDEV-260
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── Filter chips ────────────────────────────────────── -->
+      <div class="filters-row flex flex-wrap items-center gap-2 mb-8">
+        <button class="chip chip-active">All <span class="chip-count">22</span></button>
+        <button class="chip">Ready for me <span class="chip-count">7</span></button>
+        <button class="chip">
+          <span class="legend-dot" style="background: #b266ff"></span>
+          Launch blockers
+          <span class="chip-count">3</span>
+        </button>
+        <button class="chip">Has AI summary <span class="chip-count">14</span></button>
+        <button class="chip">Highest / High <span class="chip-count">9</span></button>
+        <span class="hidden sm:inline-block w-px h-6 bg-white/10 mx-1.5"></span>
+        <button class="chip">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18M6 12h12M10 17h4"/></svg>
+          Track: All
+        </button>
+      </div>
+
+      <!-- ── Group 1: Ready for you ──────────────────────────── -->
+      <section class="mb-10">
+        <div class="group-heading">
+          <span class="dot" style="background: #50dc82"></span>
+          <h2>Ready for you</h2>
+          <span class="count">7 tickets · AI handed these over</span>
+        </div>
+        <div class="group-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Card 1 (hover state demo) -->
+          <a href="#" class="card card-hover-demo">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-260</span>
+              <span class="age-text age-stale">430h in Verifying</span>
+            </div>
+            <p class="summary-line">Two-phone push reliability — relay path goes silent after 30s background</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill pill-priority-high">High</span>
+              <span class="pill">Push</span>
+              <span class="pill pill-launch">Launch blocker</span>
+              <span class="pill pill-ai">AI summary</span>
+              <span class="pill pill-build">build 65</span>
+              <span class="pill pill-blocks">Blocks 2</span>
+            </div>
+          </a>
+
+          <!-- Card 2 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-493</span>
+              <span class="age-text">12h in Verifying</span>
+            </div>
+            <p class="summary-line">BLE pairing retry after airplane-mode toggle — second phone fails to rejoin</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill pill-priority-highest">Highest</span>
+              <span class="pill">BLE</span>
+              <span class="pill pill-ai">AI summary</span>
+              <span class="pill pill-build">build 67</span>
+            </div>
+          </a>
+
+          <!-- Card 3 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-471</span>
+              <span class="age-text">96h in Verifying</span>
+            </div>
+            <p class="summary-line">Auth token refresh during expired session — banner copy missing on iOS 17</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill pill-priority-high">High</span>
+              <span class="pill">Auth</span>
+              <span class="pill pill-launch">Launch blocker</span>
+              <span class="pill pill-ai">AI summary</span>
+              <span class="pill pill-build">build 66</span>
+            </div>
+          </a>
+
+          <!-- Card 4 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-508</span>
+              <span class="age-text">4h in Verifying</span>
+            </div>
+            <p class="summary-line">Chat unread badge stays after opening thread in background</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill">Medium</span>
+              <span class="pill">Chat</span>
+              <span class="pill pill-ai">AI summary</span>
+              <span class="pill pill-build">build 67</span>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── Group 2: In progress ────────────────────────────── -->
+      <section class="mb-10">
+        <div class="group-heading">
+          <span class="dot" style="background: #6aa9ff"></span>
+          <h2>In progress</h2>
+          <span class="count">11 tickets · AI is working on these</span>
+        </div>
+        <div class="group-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Card 5 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-512</span>
+              <span class="age-text">38h In Progress</span>
+            </div>
+            <p class="summary-line">Crypto handshake fallback when one phone is on cellular only</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill pill-priority-highest">Highest</span>
+              <span class="pill">Crypto</span>
+              <span class="pill pill-launch">Launch blocker</span>
+              <span class="pill">No AI summary yet</span>
+            </div>
+            <div class="stage-bar mt-auto"><span style="width: 55%"></span></div>
+          </a>
+
+          <!-- Card 6 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-499</span>
+              <span class="age-text">22h In Progress</span>
+            </div>
+            <p class="summary-line">Observability: missing Sentry breadcrumb for relay reconnect</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill">Medium</span>
+              <span class="pill">Observability</span>
+              <span class="pill pill-ai">AI summary</span>
+            </div>
+            <div class="stage-bar mt-auto"><span style="width: 75%"></span></div>
+          </a>
+
+          <!-- Card 7 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-484</span>
+              <span class="age-text">8h In Progress</span>
+            </div>
+            <p class="summary-line">Transport: handle larger payload chunking on slower BLE link</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill pill-priority-high">High</span>
+              <span class="pill">Transport</span>
+              <span class="pill">No AI summary yet</span>
+            </div>
+            <div class="stage-bar mt-auto"><span style="width: 30%"></span></div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── Group 3: Waiting to start ───────────────────────── -->
+      <section class="mb-12">
+        <div class="group-heading">
+          <span class="dot" style="background: rgba(255, 255, 255, 0.4)"></span>
+          <h2>Waiting to start</h2>
+          <span class="count">4 tickets · AI hasn't picked these up yet</span>
+        </div>
+        <div class="group-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Card 8 -->
+          <a href="#" class="card">
+            <div class="flex items-center justify-between gap-2">
+              <span class="ticket-key">BDEV-521</span>
+              <span class="age-text">2h Selected</span>
+            </div>
+            <p class="summary-line">Noise filter false positive on iPhone 12 Pro speakerphone</p>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="pill pill-priority-high">High</span>
+              <span class="pill">Noise</span>
+              <span class="pill">No AI summary yet</span>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <p class="text-center text-xs" style="color: var(--muted)">
+        Queue refreshes every time you open this page. Cards open the full test checklist.
+      </p>
+    </div>
+
+    <script>
+      // Lightweight filter-chip toggle so the static page feels interactive.
+      document.querySelectorAll(".chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          document
+            .querySelectorAll(".chip")
+            .forEach((c) => c.classList.remove("chip-active"));
+          chip.classList.add("chip-active");
+        });
+      });
+    </script>
+  </body>
+</html>

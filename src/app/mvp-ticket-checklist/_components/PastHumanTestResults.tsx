@@ -13,7 +13,7 @@ export function PastHumanTestResultsPanel({ results }: { results: HumanTestResul
   if (!results.length) return null;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/30 p-4 sm:p-5">
+    <div className="mt-5 border-t border-white/10 pt-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--muted-strong)]">
           <ListChecks size={13} />

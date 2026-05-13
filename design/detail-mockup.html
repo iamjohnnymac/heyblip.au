@@ -1,0 +1,648 @@
+<!doctype html>
+<!--
+  Buddy — Ticket detail (mockup, Concept A "Focused checklist with progressive disclosure")
+
+  This is a static research mockup, not the real app. Concept companion to
+  design/queue-mockup.html — same dark canvas, same calm Brilliant-style
+  cards, same HeyBlip purple accent.
+
+  HOW TO TOGGLE STEPS:
+    - Open in a browser at design/detail-mockup.html
+    - Step is controlled by URL hash: #step1 (default) or #step4
+    - Or click the tiny "Step 1 ↔ Step 4" devtoggle pinned bottom-right
+    - #disclose-fix expands the "What this fix is about" drawer
+
+  Test viewports:
+    - 375px wide (iPhone SE) — single column, sticky bottom action bar
+    - 1024px+ — comfortable centered column, max-w-3xl
+
+  All copy below is realistic BDEV-352 placeholder (foreground reconnect
+  coalescing bug). No real Jira data is fetched.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Buddy — BDEV-352 (mockup)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --fg: #ffffff;
+        --muted: rgba(255, 255, 255, 0.55);
+        --muted-strong: rgba(255, 255, 255, 0.78);
+        --border: rgba(255, 255, 255, 0.08);
+        --border-strong: rgba(255, 255, 255, 0.15);
+        --card: rgba(255, 255, 255, 0.03);
+        --card-hover: rgba(255, 255, 255, 0.055);
+        --accent: #6600ff;
+        --accent-light: #8533ff;
+        --accent-tint: rgba(102, 0, 255, 0.08);
+      }
+      html, body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        border-radius: 999px;
+        padding: 0.3rem 0.7rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        line-height: 1;
+        white-space: nowrap;
+        border: 1px solid var(--border-strong);
+        background: var(--card);
+        color: var(--muted-strong);
+      }
+      .chip-build {
+        color: #c4ffd7;
+        border-color: rgba(80, 220, 130, 0.4);
+        background: rgba(80, 220, 130, 0.1);
+      }
+      .chip-status {
+        color: #bcd6ff;
+        border-color: rgba(120, 170, 255, 0.32);
+        background: rgba(120, 170, 255, 0.08);
+      }
+      .chip-surface-pass {
+        color: #c4ffd7;
+        border-color: rgba(80, 220, 130, 0.4);
+        background: rgba(80, 220, 130, 0.08);
+      }
+      .chip-surface-na {
+        color: var(--muted-strong);
+      }
+      .chip-surface-notrun {
+        color: #ffd089;
+        border-color: rgba(255, 170, 70, 0.32);
+        background: rgba(255, 170, 70, 0.08);
+      }
+      .ticket-key {
+        font-weight: 800;
+        color: var(--accent-light);
+        font-size: 0.78rem;
+        letter-spacing: 0.02em;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 1.5rem;
+        padding: 1.25rem 1.25rem;
+      }
+      @media (min-width: 640px) {
+        .card { padding: 1.6rem 1.75rem; }
+      }
+      .card-soft {
+        background: rgba(255, 255, 255, 0.025);
+        border: 1px solid var(--border);
+        border-radius: 1.25rem;
+        padding: 1.1rem 1.15rem;
+      }
+      .card-focus {
+        background: rgba(102, 0, 255, 0.07);
+        border: 1px solid rgba(102, 0, 255, 0.35);
+        border-radius: 1.75rem;
+        padding: 1.5rem 1.5rem 1.75rem;
+      }
+      @media (min-width: 640px) {
+        .card-focus { padding: 2rem 2.25rem 2.25rem; }
+      }
+      .step-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        background: var(--accent);
+        color: white;
+        border: 1px solid var(--accent);
+      }
+      .crumb {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .crumb a:hover { color: var(--fg); }
+      .step-tab {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2rem;
+        padding: 0.55rem 0.85rem;
+        border-radius: 0.85rem;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--muted);
+        min-height: 44px;
+        flex: 1 1 0;
+        text-align: left;
+        cursor: pointer;
+      }
+      .step-tab .num { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em; }
+      .step-tab .name { font-size: 0.82rem; font-weight: 600; line-height: 1.1; }
+      .step-tab-done { color: var(--muted-strong); }
+      .step-tab-done .num { color: #50dc82; }
+      .step-tab-current {
+        border-color: var(--accent);
+        background: rgba(102, 0, 255, 0.12);
+        color: var(--fg);
+      }
+      .step-tab-current .num { color: var(--accent-light); }
+      .ok { color: #b9f7cc; }
+      .bad { color: #ffb4b4; }
+      .legend-dot {
+        width: 7px; height: 7px; border-radius: 999px; display: inline-block;
+      }
+      .btn-primary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        background: var(--accent);
+        color: white;
+        font-weight: 700;
+        font-size: 0.92rem;
+        padding: 0 1.25rem;
+        height: 48px;
+        border-radius: 1rem;
+        min-width: 44px;
+        border: 1px solid var(--accent);
+      }
+      .btn-primary:hover { background: var(--accent-light); }
+      .btn-ghost {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.4rem;
+        background: var(--card);
+        color: var(--muted-strong);
+        font-weight: 600;
+        font-size: 0.82rem;
+        padding: 0 1rem;
+        height: 44px;
+        border-radius: 0.85rem;
+        border: 1px solid var(--border-strong);
+      }
+      .btn-ghost:hover { background: var(--card-hover); color: var(--fg); }
+      .pill-pass {
+        background: rgba(80, 220, 130, 0.18);
+        color: #c4ffd7;
+        border: 1px solid rgba(80, 220, 130, 0.4);
+      }
+      .pill-fail {
+        background: rgba(255, 100, 100, 0.18);
+        color: #ffb4b4;
+        border: 1px solid rgba(255, 100, 100, 0.45);
+      }
+      details > summary { list-style: none; cursor: pointer; }
+      details > summary::-webkit-details-marker { display: none; }
+      details[open] .chev { transform: rotate(180deg); }
+      .chev { transition: transform 180ms ease; }
+      ::selection { background: var(--accent); color: white; }
+      a { color: inherit; text-decoration: none; }
+
+      /* Sticky bottom action bar for Step 4 mobile */
+      .sticky-bar {
+        position: sticky;
+        bottom: 0;
+        background: linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.92) 35%, rgba(10,10,10,0.96) 100%);
+        backdrop-filter: blur(4px);
+        padding: 0.85rem 0 1.1rem;
+        margin: 0 -1rem -1rem;
+      }
+      @media (min-width: 640px) {
+        .sticky-bar {
+          position: static;
+          background: transparent;
+          backdrop-filter: none;
+          padding: 0;
+          margin: 0;
+        }
+      }
+
+      /* Tiny dev toggle pinned bottom-right — not part of production UI */
+      .devtoggle {
+        position: fixed;
+        bottom: 14px;
+        right: 14px;
+        z-index: 30;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid var(--border-strong);
+        border-radius: 999px;
+        padding: 0.4rem 0.85rem;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: var(--muted-strong);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .devtoggle:hover { color: var(--fg); }
+
+      /* Step 1 vs Step 4 visibility — toggled via :target hack */
+      .show-step1 { display: block; }
+      .show-step4 { display: none; }
+      body.step4 .show-step1 { display: none; }
+      body.step4 .show-step4 { display: block; }
+
+      /* Mobile single-column, 16px safe-area gutters */
+      @media (max-width: 640px) {
+        .step-tabs-row { flex-wrap: wrap; gap: 0.4rem; }
+        .step-tab { flex: 1 1 calc(50% - 0.2rem); }
+      }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <main class="mx-auto max-w-3xl px-4 sm:px-6 pt-5 pb-12">
+      <!-- ── Breadcrumb / queue position ─────────────────────────
+           Tiny breadcrumb instead of the full queue strip. John can
+           still get back to /queue in one tap; no dropdown clutter. -->
+      <nav class="crumb mb-5 flex items-center justify-between gap-3">
+        <a href="#" class="inline-flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          Queue
+        </a>
+        <span class="text-[0.72rem]" style="color: var(--muted)">
+          3 of 7 ready · BDEV-486 next
+        </span>
+      </nav>
+
+      <!-- ── Ticket header ──────────────────────────────────────
+           Just enough identity. Status + key + summary. No "more"
+           menu — the rare actions (clear ticks, change ticket, open
+           Jira) live in the disclosure section at the bottom. -->
+      <header class="mb-5">
+        <div class="flex items-center gap-2.5 mb-2">
+          <span class="ticket-key">BDEV-352</span>
+          <span class="chip chip-status">Verifying</span>
+          <span class="chip chip-build">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            Fix is in: build 65
+          </span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold leading-[1.08] tracking-tight">
+          Foreground reconnect fires twice when the app comes back from background
+        </h1>
+      </header>
+
+      <!-- ── 4-step tab bar (single piece of progress UI) ────────
+           Replaces the old "progress bar + 4-row list" double-up.
+           One row, 4 tabs, each tappable. Current is bordered purple. -->
+      <div class="step-tabs-row flex items-stretch gap-1.5 mb-6">
+        <a href="#step1" class="step-tab step-tab-current">
+          <span class="num">STEP 1 ·</span>
+          <span class="name">Read what the AI tested</span>
+        </a>
+        <a href="#" class="step-tab">
+          <span class="num">STEP 2</span>
+          <span class="name">Install the build</span>
+        </a>
+        <a href="#" class="step-tab">
+          <span class="num">STEP 3</span>
+          <span class="name">Try the bug</span>
+        </a>
+        <a href="#step4" class="step-tab">
+          <span class="num">STEP 4</span>
+          <span class="name">Write pass or fail</span>
+        </a>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════ -->
+      <!-- ── STEP 1 view ──────────────────────────────────────── -->
+      <!-- ══════════════════════════════════════════════════════ -->
+      <section class="show-step1">
+        <!-- Focused step card -->
+        <div class="card-focus">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="step-pill">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+              Step 1 of 4
+            </span>
+            <span class="chip" style="background: rgba(102, 0, 255, 0.08); border-color: rgba(102, 0, 255, 0.3); color: var(--accent-light)">
+              <span class="relative flex h-1.5 w-1.5">
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style="background: var(--accent-light)"></span>
+                <span class="relative inline-flex h-1.5 w-1.5 rounded-full" style="background: var(--accent-light)"></span>
+              </span>
+              Live · 5s ago
+            </span>
+          </div>
+
+          <h2 class="text-2xl sm:text-3xl font-extrabold leading-[1.1] tracking-tight">
+            Read the AI's summary in Jira
+          </h2>
+          <p class="mt-3 text-base sm:text-[1.05rem] leading-7" style="color: var(--muted-strong)">
+            You don't need to leave Buddy. The AI's summary is below — it tells
+            you what changed, the build to install, and the exact thing to look
+            for on your phone.
+          </p>
+
+          <!-- Success / failure criteria — same idea as today, calmer -->
+          <div class="mt-5 grid gap-2 text-[0.92rem] leading-6">
+            <p class="flex items-start gap-2.5">
+              <span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold" style="background: rgba(80, 220, 130, 0.22); color: #c4ffd7">✓</span>
+              <span><span class="ok font-semibold">You'll know it worked when:</span> the summary below has a real build number, not <code class="px-1 rounded bg-black/40 text-[0.82rem]">[Passed / Failed]</code> placeholders.</span>
+            </p>
+            <p class="flex items-start gap-2.5">
+              <span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold" style="background: rgba(255, 100, 100, 0.22); color: #ffb4b4">×</span>
+              <span><span class="bad font-semibold">Something's off if:</span> the summary is vague, missing the build, or still has template placeholders.</span>
+            </p>
+          </div>
+
+          <!-- "What the AI tested" panel — inline, the heart of Step 1 -->
+          <div class="mt-6 rounded-2xl border" style="border-color: var(--border-strong); background: rgba(0,0,0,0.25); padding: 1.1rem 1.15rem">
+            <div class="flex items-center gap-2 text-[0.72rem] font-bold uppercase tracking-wide" style="color: var(--accent-light)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.7L20 11l-6.1 2.3L12 19l-1.9-5.7L4 11l6.1-2.3L12 3Z"/></svg>
+              What the AI tested
+            </div>
+
+            <h3 class="mt-3 text-lg font-bold">What to do on the phone</h3>
+            <p class="mt-1.5 text-sm leading-6" style="color: var(--muted-strong)">
+              Background the app on iPhone, leave it 30+ seconds, then bring it
+              back. The relay reconnect should fire once — not twice — in the
+              first 2 seconds after foreground.
+            </p>
+
+            <ol class="mt-3 grid gap-2.5 pl-0 list-none">
+              <li class="flex gap-3 rounded-xl border p-3" style="border-color: var(--border); background: rgba(255,255,255,0.02)">
+                <span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold" style="background: rgba(102,0,255,0.25); color: var(--accent-light)">1</span>
+                <div class="text-sm leading-6">
+                  <span class="font-semibold">Open the app</span><span style="color: var(--muted-strong)"> — confirm you see the home screen, relay connected.</span>
+                </div>
+              </li>
+              <li class="flex gap-3 rounded-xl border p-3" style="border-color: var(--border); background: rgba(255,255,255,0.02)">
+                <span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold" style="background: rgba(102,0,255,0.25); color: var(--accent-light)">2</span>
+                <div class="text-sm leading-6">
+                  <span class="font-semibold">Background for 30+ seconds</span><span style="color: var(--muted-strong)"> — swipe up, wait, scroll Safari for a bit.</span>
+                </div>
+              </li>
+              <li class="flex gap-3 rounded-xl border p-3" style="border-color: var(--border); background: rgba(255,255,255,0.02)">
+                <span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold" style="background: rgba(102,0,255,0.25); color: var(--accent-light)">3</span>
+                <div class="text-sm leading-6">
+                  <span class="font-semibold">Foreground the app</span><span style="color: var(--muted-strong)"> — tap the icon. Watch for a single reconnect, not two.</span>
+                </div>
+              </li>
+              <li class="flex gap-3 rounded-xl border p-3" style="border-color: var(--border); background: rgba(255,255,255,0.02)">
+                <span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold" style="background: rgba(102,0,255,0.25); color: var(--accent-light)">4</span>
+                <div class="text-sm leading-6">
+                  <span class="font-semibold">Repeat twice more</span><span style="color: var(--muted-strong)"> — the bug was racy; make sure single-reconnect is consistent across 3 tries.</span>
+                </div>
+              </li>
+            </ol>
+
+            <!-- Surface chips — compact, no legend block. Tap a chip for tooltip. -->
+            <div class="mt-4 flex flex-wrap gap-1.5">
+              <span class="chip chip-surface-pass" title="Passed">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Automated · passed
+              </span>
+              <span class="chip chip-surface-na" title="Not applicable">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
+                Simulator · N/A
+              </span>
+              <span class="chip chip-surface-notrun" title="Not run yet">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                Worker smoke · not run
+              </span>
+            </div>
+
+            <p class="mt-3 text-[0.72rem]" style="color: var(--muted)">
+              FROM JOHN MCKEAN · 52 MINUTES AGO
+            </p>
+          </div>
+
+          <!-- Primary CTA -->
+          <div class="mt-6 flex flex-wrap items-center gap-2.5">
+            <a href="#" class="btn-primary">
+              I've read it — next step
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </a>
+            <span class="text-xs" style="color: var(--muted)">
+              Just ticks the checklist here — Jira changes only on Step 4.
+            </span>
+          </div>
+        </div>
+
+        <!-- Ask Buddy — single inline button below the step card, not a -->
+        <!-- floating mascot. Honest, calm, opt-in. -->
+        <div class="mt-4 flex justify-center">
+          <button class="btn-ghost">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 10a3 3 0 1 1 5 2c-1 1-2 1.5-2 3"/><path d="M12 17h.01"/></svg>
+            Ask Buddy to explain this step
+          </button>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════ -->
+      <!-- ── STEP 4 view ──────────────────────────────────────── -->
+      <!-- ══════════════════════════════════════════════════════ -->
+      <section class="show-step4">
+        <div class="card-focus">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="step-pill">Step 4 of 4</span>
+            <span class="chip chip-build">Fix is in: build 65</span>
+          </div>
+          <h2 class="text-2xl sm:text-3xl font-extrabold leading-[1.1] tracking-tight">
+            Write what happened
+          </h2>
+          <p class="mt-3 text-base sm:text-[1.05rem] leading-7" style="color: var(--muted-strong)">
+            Tell Buddy what you saw on the phone. Buddy posts it to Jira and
+            asks the AI whether it looks done.
+          </p>
+
+          <!-- Findings inputs -->
+          <div class="mt-5 grid gap-3">
+            <label class="block">
+              <span class="text-[0.85rem] font-semibold">What happened when you tested?</span>
+              <textarea
+                rows="3"
+                class="mt-1.5 block w-full resize-y rounded-xl border bg-black/30 px-3 py-2.5 text-sm leading-6 placeholder:opacity-50 focus:outline-none focus:ring-2"
+                style="border-color: var(--border-strong); color: var(--fg); min-height: 80px;"
+              >Backgrounded for 45s, foregrounded — single reconnect line. Repeated 3 times on iPhone 14 Pro (build 65). No duplicate fires. Cellular only, no Wi-Fi.</textarea>
+            </label>
+            <label class="block">
+              <span class="text-[0.85rem] font-semibold">
+                Paste any logs, Sentry IDs, or evidence
+                <span class="font-normal" style="color: var(--muted)">(optional)</span>
+              </span>
+              <textarea
+                rows="4"
+                class="mt-1.5 block w-full resize-y rounded-xl border bg-black/30 px-3 py-2.5 text-sm leading-6 placeholder:opacity-50 focus:outline-none focus:ring-2"
+                style="border-color: var(--border-strong); color: var(--fg); font-family: ui-monospace, Menlo, Consolas, monospace; min-height: 110px;"
+              >[14:32:11] foreground -> requesting reconnect (tag: fg-reconnect)
+[14:32:11] coalesce window opened (250ms)
+[14:32:11] socket open OK</textarea>
+            </label>
+          </div>
+
+          <!-- AI verdict card — slides in after submit -->
+          <div class="mt-5 rounded-2xl border p-4 sm:p-5" style="border-color: rgba(80,220,130,0.4); background: rgba(80,220,130,0.07)">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="chip pill-pass">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                AI says: looks done
+              </span>
+              <span class="chip chip-build">build 65</span>
+            </div>
+            <p class="mt-3 text-[0.95rem] leading-7">
+              Your log shows the coalesce window opening and a single socket
+              open — that matches the fix's intended behaviour. Three clean
+              runs is strong evidence the duplicate reconnect is gone.
+            </p>
+            <p class="mt-2 text-sm leading-6" style="color: var(--muted-strong)">
+              <span class="font-semibold">Next step:</span> mark this done.
+              Worker smoke wasn't run, but this is a client-only fix so it's
+              not needed.
+            </p>
+            <ul class="mt-3 grid gap-1 pl-0 list-none text-[0.78rem]" style="color: var(--muted-strong)">
+              <li class="flex items-start gap-1.5">
+                <span class="mt-1 inline-flex h-1 w-1 shrink-0 rounded-full" style="background: var(--muted)"></span>
+                <span>You only tested on cellular — a Wi-Fi run would be a nice extra, not a blocker.</span>
+              </li>
+            </ul>
+
+            <!-- 3 action buttons — Mark Done emphasised when AI passes -->
+            <div class="mt-4 grid gap-2 sm:grid-cols-3">
+              <button class="btn-primary" style="background: #50dc82; color: black; border-color: #50dc82">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 12h5.5a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.17 24H4a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.78-1.1L12 2h0a3 3 0 0 1 3 3v.88Z"/></svg>
+                Mark done
+              </button>
+              <button class="btn-ghost" style="border-color: rgba(255,100,100,0.35); color: #ffb4b4">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.83 2H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3 3 0 0 1-3-3v-.88Z"/></svg>
+                Reopen for fix
+              </button>
+              <button class="btn-ghost">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16h.01M12 8v5"/></svg>
+                Need more info
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════ -->
+      <!-- ── Disclosure drawers — collapsed by default, calm ───── -->
+      <!-- ══════════════════════════════════════════════════════ -->
+      <section class="mt-7 grid gap-2.5">
+        <details class="card-soft" id="disclose-fix" open>
+          <summary class="flex items-center gap-3">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style="background: rgba(102,0,255,0.15); color: var(--accent-light)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.7L20 11l-6.1 2.3L12 19l-1.9-5.7L4 11l6.1-2.3L12 3Z"/></svg>
+            </span>
+            <span class="flex-1 text-[1.02rem] font-bold">What this fix is about</span>
+            <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="mt-3 pt-3 border-t" style="border-color: var(--border)">
+            <p class="text-base font-bold">Foreground reconnect coalescing</p>
+            <p class="mt-2 text-sm leading-6" style="color: var(--muted-strong)">
+              When the app came back from background, two reconnect requests
+              were firing in the same millisecond — one from the lifecycle
+              hook, one from the network observer. The fix adds a 250ms
+              coalesce window so only the first one wins.
+            </p>
+            <p class="mt-3 text-sm leading-6" style="color: var(--muted-strong)">
+              <span class="font-semibold">Testing:</span> a real phone is the
+              only way to prove this. The bug is timing-sensitive and won't
+              repro reliably in the simulator. Three foreground cycles is
+              enough to be confident.
+            </p>
+            <div class="mt-3 grid gap-2 sm:grid-cols-3">
+              <div class="rounded-xl p-3" style="background: rgba(102,0,255,0.08); border: 1px solid rgba(102,0,255,0.3)">
+                <p class="text-[0.78rem] font-bold">Real phone</p>
+                <p class="mt-1 text-[0.78rem]" style="color: var(--muted-strong)">Required — timing-sensitive.</p>
+              </div>
+              <div class="rounded-xl p-3" style="background: rgba(255,255,255,0.025); border: 1px solid var(--border)">
+                <p class="text-[0.78rem] font-bold">Simulator</p>
+                <p class="mt-1 text-[0.78rem]" style="color: var(--muted-strong)">Doesn't reproduce.</p>
+              </div>
+              <div class="rounded-xl p-3" style="background: rgba(255,255,255,0.025); border: 1px solid var(--border)">
+                <p class="text-[0.78rem] font-bold">Automated</p>
+                <p class="mt-1 text-[0.78rem]" style="color: var(--muted-strong)">Unit test added (passed).</p>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="card-soft">
+          <summary class="flex items-center gap-3">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style="background: rgba(102,0,255,0.15); color: var(--accent-light)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8"/><path d="M12 18v4"/></svg>
+            </span>
+            <span class="flex-1 text-[1.02rem] font-bold">Where do I need to test this?</span>
+            <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+        </details>
+
+        <details class="card-soft">
+          <summary class="flex items-center gap-3">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style="background: rgba(102,0,255,0.15); color: var(--accent-light)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><path d="M8 16h.01M12 16h.01M16 16h.01"/></svg>
+            </span>
+            <span class="flex-1 text-[1.02rem] font-bold">See the AI's instructions for this ticket</span>
+            <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+        </details>
+
+        <details class="card-soft">
+          <summary class="flex items-center gap-3">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style="background: rgba(102,0,255,0.15); color: var(--accent-light)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            </span>
+            <span class="flex-1 text-[1.02rem] font-bold">Past test results & technical Jira fields</span>
+            <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+        </details>
+
+        <details class="card-soft">
+          <summary class="flex items-center gap-3">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style="background: rgba(102,0,255,0.15); color: var(--accent-light)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </span>
+            <span class="flex-1 text-[1.02rem] font-bold">Debug & ticket actions</span>
+            <span class="text-[0.72rem]" style="color: var(--muted)">Open Jira · Mark anyway · Clear ticks</span>
+            <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+        </details>
+      </section>
+
+      <p class="mt-8 text-center text-[0.72rem]" style="color: var(--muted)">
+        Buddy refreshes every 30s while this page is open.
+      </p>
+    </main>
+
+    <!-- Dev toggle — not part of production -->
+    <a href="#" id="devtoggle" class="devtoggle">Toggle Step 1 ↔ Step 4</a>
+
+    <script>
+      // Hash-based step toggle so the static mockup can demo both views.
+      function applyStepFromHash() {
+        if (location.hash === "#step4") {
+          document.body.classList.add("step4");
+        } else {
+          document.body.classList.remove("step4");
+        }
+      }
+      window.addEventListener("hashchange", applyStepFromHash);
+      applyStepFromHash();
+
+      document.getElementById("devtoggle").addEventListener("click", function (e) {
+        e.preventDefault();
+        if (document.body.classList.contains("step4")) {
+          location.hash = "#step1";
+        } else {
+          location.hash = "#step4";
+        }
+      });
+    </script>
+  </body>
+</html>
