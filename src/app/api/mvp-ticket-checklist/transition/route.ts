@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  editJiraIssueFields,
   normalizeIssueKey,
   postJiraComment,
   readJiraConfig,
@@ -118,11 +119,88 @@ export async function POST(request: Request): Promise<NextResponse<TransitionRes
     return NextResponse.json({ status: "error", message }, { status: 502 });
   }
 
+  // On Reopen, the status transition alone leaves the supporting fields
+  // (Human Final Review, MVP Loop Stage) stuck at their "Ready"-side
+  // values, and the most-recent Agent Test Update still says "passed".
+  // Buddy's queue uses those as fallback signals to surface a Ready bucket
+  // — without resetting them, the reopened ticket stays in Ready for you.
+  // We do the resets best-effort: any failure logs but doesn't fail the
+  // transition (status flip already succeeded above).
+  if (action === "reopen") {
+    try {
+      await editJiraIssueFields(jiraConfig, issueKey, {
+        customfield_10044: { value: "Failed/Reopened" }, // MVP Loop Stage
+        customfield_10046: { value: "Failed" }, // Human Final Review
+      });
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[transition route] reopen field reset failed for ${issueKey}:`,
+          error instanceof Error ? error.message : "unknown error",
+        );
+      }
+    }
+
+    // Post a second comment formatted as an Agent Test Update so
+    // scanComments picks it up as the *most recent* ATU and flips
+    // agentTestUpdateStatus from "passed" to "failed". The
+    // most-recent-ATU-wins rule means this overrides the stale
+    // "passed" claim from before reopen without rewriting history.
+    try {
+      const override = buildReopenAtuOverride({
+        buildOrCommit,
+        reasoning,
+        findingsCommentId: findingsRef,
+      });
+      await postJiraComment(jiraConfig, issueKey, override);
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[transition route] reopen ATU-override post failed for ${issueKey}:`,
+          error instanceof Error ? error.message : "unknown error",
+        );
+      }
+    }
+  }
+
   return NextResponse.json({
     status: "ready",
     action,
     verificationCommentId,
   });
+}
+
+// Mirrors the canonical Agent Test Update header / labelled-value layout
+// so scanComments + extractAgentTestUpdate both recognise it. The status
+// line is forced to "failed" so the most-recent-ATU-wins rule flips
+// agentTestUpdateStatus away from "passed".
+function buildReopenAtuOverride(input: {
+  buildOrCommit: string;
+  reasoning: string;
+  findingsCommentId: string;
+}): string {
+  const lines = [
+    "Agent Test Update — Reopened by human verification",
+    "",
+    "Agent testing: failed",
+    input.buildOrCommit ? `Build/commit: ${input.buildOrCommit}` : "",
+    "Human verification needed: yes",
+    "",
+    "Reason for reopen:",
+    input.reasoning
+      ? input.reasoning
+      : "Human verification did not pass — see the Human Test Result comment above.",
+    "",
+    "Status reset by Buddy:",
+    "- MVP Loop Stage: Failed/Reopened",
+    "- Human Final Review: Failed",
+    `- Agent testing classification: failed (overrides any earlier "passed" claim)`,
+    "",
+    input.findingsCommentId
+      ? `Findings comment id: ${input.findingsCommentId}`
+      : "See the Human Test Result comment above for the full findings + AI verdict.",
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function buildTransitionComment(input: {

@@ -2761,6 +2761,39 @@ export async function postJiraComment(
   return typeof result?.id === "string" ? result.id : "";
 }
 
+// PUT /rest/api/3/issue/{key} with a fields object so we can set
+// custom fields (MVP Loop Stage, Human Final Review, etc.) outside the
+// workflow transition. Used by the transition route's reopen path to
+// reset supporting fields so Buddy's queue no longer treats the
+// re-opened ticket as Ready. Throws on non-2xx so callers can decide
+// whether to bubble the error up or swallow it (best-effort writes).
+export async function editJiraIssueFields(
+  config: { baseUrl: string; email: string; token: string },
+  issueKey: string,
+  fields: Record<string, unknown>,
+): Promise<void> {
+  const response = await fetch(
+    `${config.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
+    {
+      method: "PUT",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Basic ${Buffer.from(`${config.email}:${config.token}`).toString("base64")}`,
+      },
+      body: JSON.stringify({ fields }),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(
+      `Jira returned ${response.status} ${response.statusText} when editing ${issueKey}. ${text.slice(0, 200)}`,
+    );
+  }
+}
+
 // Transitions a Jira issue and (optionally) leaves a comment in the same
 // payload — Jira lets you bundle a comment with a transition.
 export async function transitionJiraIssue(
