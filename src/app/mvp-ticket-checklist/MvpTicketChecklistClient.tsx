@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowUp,
   Bot,
   Check,
   ChevronDown,
@@ -1161,13 +1162,47 @@ function VerdictCard({
       ) : null}
 
       {doneAction === "mark-done" ? (
-        <p className="mt-3 text-xs text-emerald-100">
-          Buddy moved this ticket to Done in Jira. You&apos;re free to move on.
-        </p>
+        <div className="mt-4 rounded-xl border border-emerald-300/50 bg-emerald-300/15 p-4">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-300/30">
+              <TicketCheck size={20} strokeWidth={2.5} className="text-emerald-100" />
+            </div>
+            <div className="flex-1">
+              <p className="text-base font-bold text-white">
+                Ticket closed in Jira <span aria-hidden>✓</span>
+              </p>
+              <p className="mt-1 text-sm text-emerald-50/90">
+                Verification comment posted{buildOrCommit ? ` against ${buildOrCommit}` : ""}. You&apos;re free to move on.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-1.5 text-xs font-bold text-black transition-colors hover:bg-emerald-200"
+                >
+                  <ArrowUp size={13} strokeWidth={2.5} />
+                  See Buddy&apos;s next pick
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : doneAction === "reopen" ? (
-        <p className="mt-3 text-xs text-amber-100">
-          Buddy reopened this for the AI to look again. The next coding-agent will pick it up.
-        </p>
+        <div className="mt-4 rounded-xl border border-amber-300/50 bg-amber-300/15 p-4">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-300/30">
+              <RefreshCcw size={18} strokeWidth={2.5} className="text-amber-100" />
+            </div>
+            <div className="flex-1">
+              <p className="text-base font-bold text-white">
+                Sent back to engineering
+              </p>
+              <p className="mt-1 text-sm text-amber-50/90">
+                The ticket is back in In Progress — the next coding-agent will pick it up.
+              </p>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {buildOrCommit ? (
@@ -1956,15 +1991,19 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   ) : null}
 
                   {currentStep && hasAgentProof && hasBuild ? (
-                    <div className="mt-4">
+                    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
                       <button
                         type="button"
                         onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
-                        className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-4 text-sm font-bold text-black transition-colors hover:bg-emerald-200 sm:w-auto"
+                        className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/[0.04] px-4 text-sm font-semibold text-white transition-colors hover:bg-white/10 sm:w-auto"
+                        title="Tracks your progress on this page only — does not change anything in Jira"
                       >
-                        <Check size={17} strokeWidth={3} />
-                        Mark this step done
+                        <Check size={15} />
+                        I&apos;ve done this step
                       </button>
+                      <span className="text-[11px] text-[var(--muted)]">
+                        Just ticks the checklist here — Jira changes only on Step 4 &ldquo;Mark Done&rdquo;.
+                      </span>
                     </div>
                   ) : null}
 
@@ -2002,12 +2041,16 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       <Sparkles size={12} />
                       {helperHidden ? "Ask Buddy" : "Hide Buddy"}
                     </button>
-                    {currentStep && (!hasAgentProof || !hasBuild) ? (
+                    {currentStep ? (
                       <button
                         type="button"
                         onClick={() => setChecks((current) => ({ ...current, [currentStepKey]: !current[currentStepKey] }))}
                         className="ml-auto inline-flex items-center gap-1 font-semibold text-[var(--muted)] transition-colors hover:text-white"
-                        title="Tick this only if you've genuinely completed this step"
+                        title={
+                          hasAgentProof && hasBuild
+                            ? "Local-only override — ticks this step without using the AI verification flow. Same effect as the button above."
+                            : "Tick this only if you've genuinely completed this step. Jira is not touched."
+                        }
                       >
                         <Check size={12} />
                         Mark done anyway
