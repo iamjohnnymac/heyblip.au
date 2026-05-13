@@ -1,0 +1,502 @@
+"use client";
+
+// Client driver for /queue. Fetches the full ranked list once on mount,
+// polls every 30s (mirrored from MvpTicketChecklistClient), and renders:
+//
+//   1. Header — Buddy logo + total / ready summary + refresh
+//   2. "Buddy suggests next" — the highest-ranked Ready ticket (if any)
+//   3. Filter chip row with counts; single-select, "All" default
+//   4. Three vertical groups (Ready / In progress / Waiting to start)
+//
+// Boundary: this file is the only client owner of /queue. It must not
+// import from MvpTicketChecklistClient or any /mvp-ticket-checklist/*
+// component — the existing checklist client is being rebuilt in a
+// separate worktree.
+
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
+import { ArrowRight, RefreshCw, Sparkles } from "lucide-react";
+import QueueCard from "./QueueCard";
+
+// Shape of one row coming back from /api/mvp-ticket-checklist/queue. The
+// API strips `score` from the public payload; everything else on QueueRow
+// is preserved.
+export type QueueRowView = {
+  issueKey: string;
+  summary: string;
+  status: string;
+  priority: string;
+  mvpTrack: string;
+  loopStage: string;
+  verificationSurface: string;
+  humanFinalReview: string;
+  verifiedBuildOrCommit: string;
+  updatedAt: string;
+  statusChangedAt: string;
+  blocksKeys: string[];
+  blockedByKeys: string[];
+  labels: string[];
+  hasAgentTestUpdate: boolean;
+  hasHumanTestResult: boolean;
+  reasons: string[];
+  ageInStatusHours: number;
+  hasBuild: boolean;
+  hasHumanReady: boolean;
+  surfaceList: string[];
+  presence: { sessionId: string; ageMinutes: number } | null;
+};
+
+type FetchState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; rows: QueueRowView[] }
+  | { status: "error"; message: string };
+
+type FilterKey =
+  | "all"
+  | "ready"
+  | "launch-blockers"
+  | "has-ai-summary"
+  | "high-priority";
+
+// ── Grouping helpers ─────────────────────────────────────────────────
+//
+// Plain-English buckets that mirror the mockup. Priority is intentional:
+// "Ready for you" wins ties — a "Verifying" ticket also marked
+// `humanFinalReview=Ready` shouldn't show up under "In progress".
+
+function isReady(row: QueueRowView): boolean {
+  const status = row.status.toLowerCase();
+  const review = row.humanFinalReview.toLowerCase();
+  const stage = row.loopStage.toLowerCase();
+  if (status === "verifying") return true;
+  if (review === "ready") return true;
+  return /verifying|in build|ci green/i.test(stage);
+}
+
+function isInProgress(row: QueueRowView): boolean {
+  if (isReady(row)) return false;
+  return row.status.toLowerCase() === "in progress";
+}
+
+function isWaiting(row: QueueRowView): boolean {
+  if (isReady(row) || isInProgress(row)) return false;
+  const status = row.status.toLowerCase();
+  const stage = row.loopStage.toLowerCase();
+  return status === "selected" || stage === "selected";
+}
+
+function matchesFilter(row: QueueRowView, filter: FilterKey): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "ready":
+      return isReady(row);
+    case "launch-blockers":
+      return row.labels.some((label) => label.toLowerCase() === "launch-blocker");
+    case "has-ai-summary":
+      return row.hasAgentTestUpdate;
+    case "high-priority": {
+      const p = row.priority.toLowerCase();
+      return p === "highest" || p === "high";
+    }
+    default:
+      return true;
+  }
+}
+
+// ── Component ────────────────────────────────────────────────────────
+
+export default function QueueClient({ accessParam }: { accessParam: string }) {
+  const router = useRouter();
+  const [state, setState] = useState<FetchState>({ status: "idle" });
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const [isRefreshing, startRefresh] = useTransition();
+
+  const buildUrl = useCallback(() => {
+    const qs = new URLSearchParams({ limit: "all" });
+    if (accessParam) qs.set("access", accessParam);
+    return `/api/mvp-ticket-checklist/queue?${qs.toString()}`;
+  }, [accessParam]);
+
+  const load = useCallback(
+    async (mode: "initial" | "poll") => {
+      if (mode === "initial") setState({ status: "loading" });
+      try {
+        const response = await fetch(buildUrl(), { cache: "no-store" });
+        const body = await response.json();
+        if (body.status !== "ready") {
+          setState({ status: "error", message: body.message || "Queue could not load." });
+          return;
+        }
+        const rows = Array.isArray(body.rows) ? (body.rows as QueueRowView[]) : [];
+        setState({ status: "ready", rows });
+      } catch (error) {
+        setState({
+          status: "error",
+          message: error instanceof Error ? error.message : "Queue request failed.",
+        });
+      }
+    },
+    [buildUrl],
+  );
+
+  // Initial fetch. `load("initial")` synchronously sets state to "loading"
+  // before awaiting, so React lint flags it as a setState-in-effect. Defer
+  // to a microtask so the first render commits as { status: "idle" } and
+  // the effect cleanly transitions afterwards.
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void load("initial");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [load]);
+
+  // 30s polling — mirrors MvpTicketChecklistClient. Skip polling when the
+  // tab is hidden so we don't quietly hammer Jira when nobody's looking.
+  useEffect(() => {
+    let lastChecked = Date.now();
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      lastChecked = Date.now();
+      void load("poll");
+    };
+    const onVisibility = () => {
+      if (typeof document === "undefined" || document.hidden) return;
+      if (Date.now() - lastChecked > 15_000) tick();
+    };
+    const interval = setInterval(tick, 30_000);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [load]);
+
+  // Hoisting `rows` through useMemo keeps its identity stable across
+  // renders when the underlying state hasn't changed — without this the
+  // downstream useMemo hooks see "rows" as a fresh array every render and
+  // never benefit from memoisation.
+  const rows = useMemo<QueueRowView[]>(
+    () => (state.status === "ready" ? state.rows : []),
+    [state],
+  );
+
+  // Derive counts off the full row set so filter chips show truth, not
+  // "what's currently visible".
+  const counts = useMemo(() => {
+    const result = {
+      all: rows.length,
+      ready: 0,
+      "launch-blockers": 0,
+      "has-ai-summary": 0,
+      "high-priority": 0,
+    } as Record<FilterKey, number>;
+    for (const row of rows) {
+      if (isReady(row)) result.ready += 1;
+      if (row.labels.some((label) => label.toLowerCase() === "launch-blocker"))
+        result["launch-blockers"] += 1;
+      if (row.hasAgentTestUpdate) result["has-ai-summary"] += 1;
+      const p = row.priority.toLowerCase();
+      if (p === "highest" || p === "high") result["high-priority"] += 1;
+    }
+    return result;
+  }, [rows]);
+
+  const filteredRows = useMemo(
+    () => rows.filter((row) => matchesFilter(row, filter)),
+    [rows, filter],
+  );
+
+  const readyRows = useMemo(() => filteredRows.filter(isReady), [filteredRows]);
+  const inProgressRows = useMemo(() => filteredRows.filter(isInProgress), [filteredRows]);
+  const waitingRows = useMemo(() => filteredRows.filter(isWaiting), [filteredRows]);
+
+  const topPick = rows.find(isReady);
+
+  function handleRefresh() {
+    startRefresh(() => {
+      router.refresh();
+      void load("poll");
+    });
+  }
+
+  return (
+    <main className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
+      <Header
+        total={rows.length}
+        readyCount={counts.ready}
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+      />
+
+      {state.status === "loading" ? <LoadingSkeleton /> : null}
+
+      {state.status === "error" ? (
+        <ErrorBanner message={state.message} onRetry={() => void load("initial")} />
+      ) : null}
+
+      {state.status === "ready" ? (
+        <>
+          {topPick ? <TopPickBanner row={topPick} accessParam={accessParam} /> : null}
+
+          <FilterChipRow filter={filter} onChange={setFilter} counts={counts} />
+
+          <GroupSection
+            title="Ready for you"
+            tagline="AI handed these over"
+            dotClass="bg-emerald-400"
+            rows={readyRows}
+            accessParam={accessParam}
+          />
+          <GroupSection
+            title="In progress"
+            tagline="AI is working on these"
+            dotClass="bg-sky-400"
+            rows={inProgressRows}
+            accessParam={accessParam}
+          />
+          <GroupSection
+            title="Waiting to start"
+            tagline="AI hasn't picked these up yet"
+            dotClass="bg-white/40"
+            rows={waitingRows}
+            accessParam={accessParam}
+          />
+
+          <p className="mt-10 text-center text-xs text-[var(--muted)]">
+            Refreshes every 30 seconds. Cards open the full test checklist.
+          </p>
+        </>
+      ) : null}
+    </main>
+  );
+}
+
+// ── Header ───────────────────────────────────────────────────────────
+
+function Header({
+  total,
+  readyCount,
+  onRefresh,
+  isRefreshing,
+}: {
+  total: number;
+  readyCount: number;
+  onRefresh: () => void;
+  isRefreshing: boolean;
+}) {
+  return (
+    <header className="mb-7 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[var(--accent)]">
+          <span className="text-lg font-extrabold leading-none text-white">B</span>
+        </div>
+        <div className="min-w-0">
+          <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-2xl">Buddy queue</h1>
+          <p className="text-sm text-[var(--muted)]">
+            {total} {total === 1 ? "ticket" : "tickets"} across testing
+            <span className="mx-1.5">·</span>
+            {readyCount} ready for you
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={isRefreshing}
+        aria-label="Refresh queue"
+        className="inline-flex h-11 min-w-[44px] items-center justify-center gap-2 rounded-2xl border border-[var(--border-strong)] bg-white/[0.03] px-3 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-60"
+      >
+        <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+        <span className="hidden sm:inline">{isRefreshing ? "Refreshing…" : "Refresh"}</span>
+      </button>
+    </header>
+  );
+}
+
+// ── Top pick banner ──────────────────────────────────────────────────
+
+function TopPickBanner({ row, accessParam }: { row: QueueRowView; accessParam: string }) {
+  const href = (
+    accessParam
+      ? `/mvp-ticket-checklist?issue=${encodeURIComponent(row.issueKey)}&access=${encodeURIComponent(accessParam)}`
+      : `/mvp-ticket-checklist?issue=${encodeURIComponent(row.issueKey)}`
+  ) as Route;
+
+  const reasons = row.reasons.slice(0, 4).join(" · ");
+
+  return (
+    <section
+      className="mb-7 rounded-3xl border p-5 sm:p-6"
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(102,0,255,0.18) 0%, rgba(102,0,255,0.05) 60%, transparent 100%)",
+        borderColor: "rgba(102,0,255,0.35)",
+      }}
+    >
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1.5 flex items-center gap-2 text-[var(--accent-light)]">
+            <Sparkles size={16} />
+            <span className="text-xs font-bold uppercase tracking-wide">Buddy suggests next</span>
+          </div>
+          <p className="text-lg font-bold leading-snug sm:text-xl">
+            <span className="mr-1.5 text-base font-extrabold tracking-wide text-[var(--accent-light)]">
+              {row.issueKey}
+            </span>
+            {row.summary}
+          </p>
+          {reasons ? (
+            <p className="mt-1.5 text-[0.79rem] leading-snug text-[var(--muted)]">{reasons}</p>
+          ) : null}
+        </div>
+        <Link
+          href={href}
+          className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-2xl bg-[var(--accent)] px-5 font-bold text-white transition-colors hover:bg-[var(--accent-light)]"
+        >
+          Open {row.issueKey}
+          <ArrowRight size={16} />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+// ── Filter chips ─────────────────────────────────────────────────────
+
+function FilterChipRow({
+  filter,
+  onChange,
+  counts,
+}: {
+  filter: FilterKey;
+  onChange: (next: FilterKey) => void;
+  counts: Record<FilterKey, number>;
+}) {
+  const chips: { key: FilterKey; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "ready", label: "Ready for me" },
+    { key: "launch-blockers", label: "Launch blockers" },
+    { key: "has-ai-summary", label: "Has AI summary" },
+    { key: "high-priority", label: "Highest / High" },
+  ];
+  return (
+    <div className="mb-8 -mx-2 flex flex-nowrap items-center gap-2 overflow-x-auto px-2 pb-1 sm:flex-wrap sm:overflow-visible">
+      {chips.map(({ key, label }) => {
+        const isActive = filter === key;
+        const count = counts[key] ?? 0;
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange(key)}
+            // min-h-[44px] keeps chips comfortably tappable on iPhone even
+            // though the visual baseline is shorter; matches Apple's HIG.
+            className={`inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2 text-[0.82rem] font-semibold leading-none transition-colors ${
+              isActive
+                ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                : "border-[var(--border-strong)] bg-white/[0.03] text-[var(--muted-strong)] hover:bg-white/[0.06] hover:text-white"
+            }`}
+          >
+            {label}
+            <span
+              className={`rounded-full px-1.5 py-[0.1rem] text-[0.68rem] font-bold ${
+                isActive ? "bg-white/[0.22]" : "bg-white/[0.12]"
+              }`}
+            >
+              {count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Group section ────────────────────────────────────────────────────
+
+function GroupSection({
+  title,
+  tagline,
+  dotClass,
+  rows,
+  accessParam,
+}: {
+  title: string;
+  tagline: string;
+  dotClass: string;
+  rows: QueueRowView[];
+  accessParam: string;
+}) {
+  return (
+    <section className="mb-10">
+      <div className="mb-4 flex items-baseline gap-2.5">
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${dotClass}`} />
+        <h2 className="text-[1.05rem] font-bold tracking-tight">{title}</h2>
+        <span className="text-sm font-medium text-[var(--muted)]">
+          {rows.length} {rows.length === 1 ? "ticket" : "tickets"} · {tagline}
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="rounded-2xl border border-[var(--border)] bg-white/[0.015] px-4 py-6 text-center text-sm text-[var(--muted)]">
+          No tickets in this group right now.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {rows.map((row) => (
+            <QueueCard key={row.issueKey} row={row} accessParam={accessParam} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Loading / error states ───────────────────────────────────────────
+
+function LoadingSkeleton() {
+  return (
+    <div className="grid animate-pulse gap-4">
+      <div className="h-24 rounded-3xl bg-white/[0.04]" />
+      <div className="flex flex-wrap gap-2">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="h-9 w-24 rounded-full bg-white/[0.04]" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="h-[168px] rounded-2xl bg-white/[0.04]" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="mb-7 flex flex-col items-start gap-3 rounded-2xl border border-rose-300/35 bg-rose-300/5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-rose-100">Queue could not load.</p>
+        <p className="mt-0.5 text-[0.78rem] text-rose-200/70">{message}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="inline-flex h-11 min-w-[44px] items-center justify-center gap-2 rounded-2xl border border-rose-300/40 bg-rose-300/10 px-4 text-sm font-semibold text-rose-100 transition-colors hover:bg-rose-300/15"
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
