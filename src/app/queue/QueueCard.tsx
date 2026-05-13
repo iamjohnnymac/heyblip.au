@@ -90,6 +90,7 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
       const body = (await response.json()) as
         | { status: "ready"; commentId: string }
         | { status: "exists"; message: string }
+        | { status: "in-flight"; message: string }
         | { status: "error"; message: string };
 
       if (response.status === 409 && body.status === "exists") {
@@ -97,6 +98,18 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
         // and let the queue re-fetch reveal the new "AI summary" pill.
         setGenerateState({ kind: "done" });
         router.refresh();
+        return;
+      }
+
+      if (response.status === 409 && body.status === "in-flight") {
+        // Same ticket is already being generated (probably this tab's
+        // own previous tap that hasn't completed). Show a soft hint
+        // instead of an error red — the original tap will populate
+        // the pill shortly.
+        setGenerateState({
+          kind: "error",
+          message: "Buddy is already writing this summary — hold tight.",
+        });
         return;
       }
 
@@ -167,17 +180,17 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
           // goes red; inconclusive goes amber.
           row.agentTestUpdateStatus === "failed" ? (
             <span className="inline-flex items-center gap-1 rounded-full border border-red-300/55 bg-red-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-red-100">
-              <Sparkles size={11} strokeWidth={3} />
+              <Sparkles size={11} strokeWidth={3} aria-hidden="true" />
               Failed on build {shortenShas(row.verifiedBuildOrCommit)}
             </span>
           ) : row.agentTestUpdateStatus === "inconclusive" ? (
             <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/45 bg-amber-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-amber-100">
-              <Sparkles size={11} strokeWidth={3} />
+              <Sparkles size={11} strokeWidth={3} aria-hidden="true" />
               Needs more info — build {shortenShas(row.verifiedBuildOrCommit)}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100">
-              <Check size={11} strokeWidth={3} />
+              <Check size={11} strokeWidth={3} aria-hidden="true" />
               Fix in build {shortenShas(row.verifiedBuildOrCommit)}
             </span>
           )
@@ -186,7 +199,7 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
           // Generate-AI-Summary was tapped, or the agent commented without
           // shipping yet). Amber is the "wait, no real code yet" signal.
           <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-amber-100">
-            <Sparkles size={11} strokeWidth={3} />
+            <Sparkles size={11} strokeWidth={3} aria-hidden="true" />
             Plan only
           </span>
         ) : (

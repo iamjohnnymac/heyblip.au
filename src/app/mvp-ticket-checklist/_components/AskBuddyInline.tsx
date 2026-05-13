@@ -10,6 +10,7 @@ import { textWrapStyle } from "./shared";
 export function AskBuddyInline({
   speech,
   sourceLabel,
+  sourceHint,
   isLoading,
   expanded,
   onToggle,
@@ -17,6 +18,10 @@ export function AskBuddyInline({
 }: {
   speech: string;
   sourceLabel: string;
+  // Optional one-line hint shown next to the source label — e.g. when
+  // the AI coach failed and we degraded to the deterministic local
+  // guide, so the user knows the response isn't a fresh AI reply.
+  sourceHint?: string;
   isLoading: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -31,7 +36,7 @@ export function AskBuddyInline({
           aria-expanded={expanded}
           className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/15 bg-black/30 px-4 text-sm font-semibold text-[var(--muted-strong)] transition-colors hover:text-white"
         >
-          <HelpCircle size={14} />
+          <HelpCircle size={14} aria-hidden="true" />
           {expanded ? "Hide Buddy's help" : "Ask Buddy to explain this step"}
         </button>
       </div>
@@ -41,11 +46,19 @@ export function AskBuddyInline({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2 }}
           className="mt-3 rounded-2xl border border-white/10 bg-black/30 p-4 sm:p-5"
+          role="region"
+          aria-label="Buddy's help"
+          aria-live="polite"
         >
           <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wide text-[var(--muted)]">
             <span className="inline-flex items-center gap-1 rounded-md border border-sky-300/25 bg-sky-300/10 px-2 py-0.5 font-bold text-sky-100">
               {sourceLabel}
             </span>
+            {sourceHint ? (
+              <span className="break-words text-[11px] normal-case tracking-normal text-amber-200">
+                {sourceHint}
+              </span>
+            ) : null}
           </div>
           <p
             className="mt-3 break-words text-sm leading-6 text-[var(--muted-strong)]"
@@ -60,7 +73,7 @@ export function AskBuddyInline({
               disabled={isLoading}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-3.5 text-sm font-bold text-white transition-colors hover:bg-[var(--accent-light)] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Sparkles size={14} />
+              <Sparkles size={14} aria-hidden="true" />
               {isLoading ? "Thinking..." : "Ask the AI"}
             </button>
           </div>

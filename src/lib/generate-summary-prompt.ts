@@ -153,6 +153,10 @@ export function unwrapOuterCodeFence(raw: string): string {
 // In-memory dedup cache keyed on issueKey, so a double-click doesn't
 // double-post. 30s TTL mirrors the findings verdict cache.
 const GENERATE_CACHE_TTL_MS = 30_000;
+// In-flight calls hold their lock a little longer than a typical OpenRouter
+// generate (5–15s) so a double-tap during the call gets rejected as
+// in-flight rather than racing through to a second comment post.
+const GENERATE_INFLIGHT_TTL_MS = 60_000;
 
 type CachedGeneration = {
   expiresAt: number;
@@ -173,4 +177,32 @@ export function getCachedGeneration(key: string, now: number): unknown {
 
 export function setCachedGeneration(key: string, body: unknown, now: number): void {
   generateCache.set(key, { expiresAt: now + GENERATE_CACHE_TTL_MS, body });
+}
+
+// In-flight tracker — prevents a double-tap on "Generate" from posting
+// two Jira comments. Tap A starts the ~10s OpenRouter call; tap B
+// would otherwise sneak past the response-body cache (which only
+// populates at the END of A) and post a second comment. With the lock,
+// tap B returns "already generating" until tap A's response lands and
+// the cache entry takes over.
+const generateInFlight = new Map<string, number>();
+
+export function isGenerationInFlight(key: string, now: number): boolean {
+  const startedAt = generateInFlight.get(key);
+  if (!startedAt) return false;
+  if (startedAt + GENERATE_INFLIGHT_TTL_MS <= now) {
+    // The previous call has taken too long — stuck handler or
+    // server restart. Clear the lock so a fresh tap can proceed.
+    generateInFlight.delete(key);
+    return false;
+  }
+  return true;
+}
+
+export function markGenerationInFlight(key: string, now: number): void {
+  generateInFlight.set(key, now);
+}
+
+export function clearGenerationInFlight(key: string): void {
+  generateInFlight.delete(key);
 }

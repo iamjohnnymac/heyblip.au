@@ -249,6 +249,7 @@ function VerdictCard({
       transition={{ duration: 0.25 }}
       className={`mt-5 rounded-2xl border p-4 sm:p-5 ${chip.cardClass}`}
       role="region"
+      aria-label={`AI verdict: ${chip.label}`}
       aria-live="polite"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -279,6 +280,39 @@ function VerdictCard({
         </ul>
       ) : null}
 
+      {/* PartialFailures warning is rendered FIRST inside the
+          post-action block so it can't end up tucked behind the
+          mobile sticky action bar. The sticky bar adds 128px of
+          bottom padding to the page, but a warning rendered after the
+          Mark-done celebration sits below the celebration card and on
+          a short phone scrolls into the sticky-bar overlap zone.
+          Putting it above the celebration moves it into the natural
+          read order and well clear of the fixed bottom bar. */}
+      {transitionState.kind === "done"
+        && transitionState.partialFailures
+        && transitionState.partialFailures.length > 0 ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mt-4 rounded-xl border border-amber-300/55 bg-amber-300/15 px-3 py-3 text-xs text-amber-50"
+        >
+          <p className="text-sm font-semibold text-white">
+            Jira moved the ticket, but some follow-up writes didn&apos;t land:
+          </p>
+          <ul className="mt-1.5 grid list-none gap-1 pl-0">
+            {transitionState.partialFailures.map((message, idx) => (
+              <li key={idx} className="flex items-start gap-1.5">
+                <span className="mt-1 inline-flex h-1 w-1 shrink-0 rounded-full bg-amber-200" />
+                <span>{message}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[10px] uppercase tracking-wide text-amber-200/90">
+            The queue may still show this ticket in its old bucket — refresh and flag PM if it doesn&apos;t self-correct.
+          </p>
+        </div>
+      ) : null}
+
       {stickyActions ? (
         <p className="mt-4 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[var(--muted)] md:hidden">
           Use the action buttons at the bottom of the screen to mark this done, reopen, or ask for more info.
@@ -298,8 +332,11 @@ function VerdictCard({
       </div>
 
       {transitionState.kind === "error" ? (
-        <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-300/45 bg-red-300/10 px-3 py-2 text-xs text-red-100">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+        <p
+          role="alert"
+          className="mt-3 flex items-start gap-2 rounded-lg border border-red-300/45 bg-red-300/10 px-3 py-2 text-xs text-red-100"
+        >
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
           {transitionState.message}
         </p>
       ) : null}
@@ -308,7 +345,7 @@ function VerdictCard({
         <div className="mt-4 rounded-xl border border-emerald-300/50 bg-emerald-300/15 p-4">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-300/30">
-              <TicketCheck size={20} strokeWidth={2.5} className="text-emerald-100" />
+              <TicketCheck size={20} strokeWidth={2.5} className="text-emerald-100" aria-hidden="true" />
             </div>
             <div className="flex-1">
               <p className="text-base font-bold text-white">
@@ -323,7 +360,7 @@ function VerdictCard({
                   onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-1.5 text-xs font-bold text-black transition-colors hover:bg-emerald-200"
                 >
-                  <ArrowUp size={13} strokeWidth={2.5} />
+                  <ArrowUp size={13} strokeWidth={2.5} aria-hidden="true" />
                   See Buddy&apos;s next pick
                 </button>
               </div>
@@ -334,7 +371,7 @@ function VerdictCard({
         <div className="mt-4 rounded-xl border border-amber-300/50 bg-amber-300/15 p-4">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-300/30">
-              <RefreshCcw size={18} strokeWidth={2.5} className="text-amber-100" />
+              <RefreshCcw size={18} strokeWidth={2.5} className="text-amber-100" aria-hidden="true" />
             </div>
             <div className="flex-1">
               <p className="text-base font-bold text-white">Sent back to engineering</p>
@@ -343,27 +380,6 @@ function VerdictCard({
               </p>
             </div>
           </div>
-        </div>
-      ) : null}
-
-      {transitionState.kind === "done"
-        && transitionState.partialFailures
-        && transitionState.partialFailures.length > 0 ? (
-        <div className="mt-3 rounded-xl border border-amber-300/45 bg-amber-300/10 px-3 py-3 text-xs text-amber-100">
-          <p className="font-semibold">
-            Jira moved the ticket, but some follow-up writes didn&apos;t land:
-          </p>
-          <ul className="mt-1.5 grid list-none gap-1 pl-0">
-            {transitionState.partialFailures.map((message, idx) => (
-              <li key={idx} className="flex items-start gap-1.5">
-                <span className="mt-1 inline-flex h-1 w-1 shrink-0 rounded-full bg-amber-200" />
-                <span>{message}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[10px] uppercase tracking-wide text-amber-200/80">
-            The queue may still show this ticket in its old bucket — refresh and flag PM if it doesn&apos;t self-correct.
-          </p>
         </div>
       ) : null}
 

@@ -715,6 +715,13 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
       : coachState.status === "loading" && coachState.stepIndex === currentStepIndex
         ? "Thinking"
         : "Local guide";
+  // Surface a one-line hint when the route returned a fallback with
+  // an explanation (Haiku failed mid-call, or no key configured) so
+  // the "Local guide" badge isn't ambiguous.
+  const mascotSourceHint =
+    coachMatchesCurrentStep && coachState.source === "fallback" && coachState.message
+      ? coachState.message
+      : undefined;
   const router = useRouter();
 
   async function copyToClipboard(id: string, text: string) {
@@ -1248,8 +1255,12 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               {humanTestPlan.agentUpdate.found
                 && humanTestPlan.agentUpdate.buildOrCommit
                 && /^to do$|^todo$|^open$|^backlog$/i.test(data.status || "") ? (
-                <p className="mb-4 flex items-start gap-2 rounded-xl border border-amber-300/35 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
-                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mb-4 flex items-start gap-2 rounded-xl border border-amber-300/35 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100"
+                >
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
                   <span>
                     Heads up: the fix is merged but Jira didn&apos;t move the ticket out of{" "}
                     <span className="font-semibold">To Do</span>. PM/Cowork will fix the status — your testing is still valid.
@@ -1263,8 +1274,12 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                   a closed ticket without knowing it's closed. */}
               {/^done$/i.test(data.status || "")
                 && !/passed/i.test(data.customFields.humanFinalReview || "") ? (
-                <p className="mb-4 flex items-start gap-2 rounded-xl border border-sky-300/35 bg-sky-300/10 px-4 py-3 text-sm leading-6 text-sky-100">
-                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mb-4 flex items-start gap-2 rounded-xl border border-sky-300/35 bg-sky-300/10 px-4 py-3 text-sm leading-6 text-sky-100"
+                >
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
                   <span>
                     Jira already has this ticket as <span className="font-semibold">Done</span>, but Human Final Review is still{" "}
                     <span className="font-semibold">{data.customFields.humanFinalReview || "Ready"}</span>.
@@ -1408,6 +1423,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
             <AskBuddyInline
               speech={mascotSpeech}
               sourceLabel={mascotSourceLabel}
+              sourceHint={mascotSourceHint}
               isLoading={coachState.status === "loading"}
               expanded={askExpanded}
               onToggle={() => setAskExpanded((value) => !value)}

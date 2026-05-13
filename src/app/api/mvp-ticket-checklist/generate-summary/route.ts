@@ -8,9 +8,11 @@ import {
 import {
   buildGenerateSummarySystemPrompt,
   buildGenerateSummaryUserPayload,
+  clearGenerationInFlight,
   getCachedGeneration,
-  inferStatusMode,
+  isGenerationInFlight,
   looksLikeAgentTestUpdate,
+  markGenerationInFlight,
   setCachedGeneration,
   unwrapOuterCodeFence,
   type GenerateSummaryInput,
@@ -42,6 +44,10 @@ type GenerateSummaryResponse =
     }
   | {
       status: "exists";
+      message: string;
+    }
+  | {
+      status: "in-flight";
       message: string;
     }
   | { status: "error"; message: string };
@@ -105,110 +111,128 @@ export async function POST(
     return NextResponse.json({ ...cachedBody, cached: true });
   }
 
-  const checklist = await getJiraTicketChecklist(issueKey);
-  if (checklist.status !== "ready") {
-    return NextResponse.json(
-      { status: "error", message: checklist.message || "Jira lookup failed." },
-      { status: 502 },
-    );
-  }
-
-  const data = checklist.data;
-
-  // Idempotency: refuse to double-post. If extractAgentTestUpdate already
-  // found an "Agent Test Update" comment on the ticket, surface a 409 and
-  // tell the caller to refresh — the existing summary is the truth.
-  if (data.humanTestPlan.agentUpdate.found) {
+  // In-flight check — covers the race between cache miss and cache
+  // populate that a 10s OpenRouter call opens up. Without this, a
+  // double-tap during the model call would post two comments on the
+  // same ticket. We return 409 so the client can show "already
+  // generating, hold on" instead of starting a fresh request.
+  if (isGenerationInFlight(cacheKey, now)) {
     return NextResponse.json(
       {
-        status: "exists",
-        message: "An AI summary is already on this ticket. Refresh to see it.",
+        status: "in-flight",
+        message: "Buddy is already writing this summary — hold tight.",
       },
       { status: 409 },
     );
   }
+  markGenerationInFlight(cacheKey, now);
 
-  const mode = inferStatusMode(data.status);
-  if (mode === "in-progress" || mode === "verifying") {
-    // intentional: both supported. Surface for downstream readability.
-  }
-
-  const input: GenerateSummaryInput = {
-    issueKey,
-    summary: data.summary,
-    status: data.status,
-    descriptionText: data.descriptionText,
-    acceptanceCriteria: data.workRecipe.acceptanceQuestions.join("\n"),
-    mvpTrack: data.customFields.mvpTrack,
-    verificationSurface: data.customFields.verificationSurface,
-    verifiedBuildOrCommit: data.customFields.verifiedBuildOrCommit,
-    loopStage: data.customFields.loopStage,
-  };
-
-  const openRouterApiKey = process.env.OPENROUTER_API_KEY;
-  if (!openRouterApiKey) {
-    return NextResponse.json(
-      {
-        status: "error",
-        message:
-          "OpenRouter is not configured on the server, so an AI summary can't be generated.",
-      },
-      { status: 503 },
-    );
-  }
-
-  let commentBody: string;
   try {
-    commentBody = await callOpenRouter(input, openRouterApiKey);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "AI call failed.";
-    return NextResponse.json(
-      { status: "error", message: `Buddy couldn't reach the AI: ${message}` },
-      { status: 502 },
-    );
+    const checklist = await getJiraTicketChecklist(issueKey);
+    if (checklist.status !== "ready") {
+      return NextResponse.json(
+        { status: "error", message: checklist.message || "Jira lookup failed." },
+        { status: 502 },
+      );
+    }
+
+    const data = checklist.data;
+
+    // Idempotency: refuse to double-post. If extractAgentTestUpdate already
+    // found an "Agent Test Update" comment on the ticket, surface a 409 and
+    // tell the caller to refresh — the existing summary is the truth.
+    if (data.humanTestPlan.agentUpdate.found) {
+      return NextResponse.json(
+        {
+          status: "exists",
+          message: "An AI summary is already on this ticket. Refresh to see it.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const input: GenerateSummaryInput = {
+      issueKey,
+      summary: data.summary,
+      status: data.status,
+      descriptionText: data.descriptionText,
+      acceptanceCriteria: data.workRecipe.acceptanceQuestions.join("\n"),
+      mvpTrack: data.customFields.mvpTrack,
+      verificationSurface: data.customFields.verificationSurface,
+      verifiedBuildOrCommit: data.customFields.verifiedBuildOrCommit,
+      loopStage: data.customFields.loopStage,
+    };
+
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY;
+    if (!openRouterApiKey) {
+      return NextResponse.json(
+        {
+          status: "error",
+          message:
+            "OpenRouter is not configured on the server, so an AI summary can't be generated.",
+        },
+        { status: 503 },
+      );
+    }
+
+    let commentBody: string;
+    try {
+      commentBody = await callOpenRouter(input, openRouterApiKey);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI call failed.";
+      return NextResponse.json(
+        { status: "error", message: `Buddy couldn't reach the AI: ${message}` },
+        { status: 502 },
+      );
+    }
+
+    const cleaned = unwrapOuterCodeFence(commentBody);
+    if (!looksLikeAgentTestUpdate(cleaned)) {
+      return NextResponse.json(
+        {
+          status: "error",
+          message:
+            "AI returned an unrecognised summary. Try again — Buddy will ask for a fresh one.",
+        },
+        { status: 502 },
+      );
+    }
+
+    const jiraConfig = readJiraConfig();
+    if ("missingEnv" in jiraConfig) {
+      return NextResponse.json(
+        {
+          status: "error",
+          message: "Jira is not configured on the server, so this summary can't be posted.",
+        },
+        { status: 503 },
+      );
+    }
+
+    let postedCommentId = "";
+    try {
+      postedCommentId = await postJiraComment(jiraConfig, issueKey, cleaned);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Posting the comment failed.";
+      return NextResponse.json({ status: "error", message }, { status: 502 });
+    }
+
+    const body: Extract<GenerateSummaryResponse, { status: "ready" }> = {
+      status: "ready",
+      commentId: postedCommentId,
+      postedAt: new Date().toISOString(),
+      source: "openrouter",
+      cached: false,
+    };
+
+    setCachedGeneration(cacheKey, body, now);
+    return NextResponse.json(body);
+  } finally {
+    // Release the in-flight lock on every exit path — success, 409,
+    // 502, 503, and uncaught throws. Without this a stuck handler
+    // would block the issue for GENERATE_INFLIGHT_TTL_MS (60s).
+    clearGenerationInFlight(cacheKey);
   }
-
-  const cleaned = unwrapOuterCodeFence(commentBody);
-  if (!looksLikeAgentTestUpdate(cleaned)) {
-    return NextResponse.json(
-      {
-        status: "error",
-        message:
-          "AI returned an unrecognised summary. Try again — Buddy will ask for a fresh one.",
-      },
-      { status: 502 },
-    );
-  }
-
-  const jiraConfig = readJiraConfig();
-  if ("missingEnv" in jiraConfig) {
-    return NextResponse.json(
-      {
-        status: "error",
-        message: "Jira is not configured on the server, so this summary can't be posted.",
-      },
-      { status: 503 },
-    );
-  }
-
-  let postedCommentId = "";
-  try {
-    postedCommentId = await postJiraComment(jiraConfig, issueKey, cleaned);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Posting the comment failed.";
-    return NextResponse.json({ status: "error", message }, { status: 502 });
-  }
-
-  const body: Extract<GenerateSummaryResponse, { status: "ready" }> = {
-    status: "ready",
-    commentId: postedCommentId,
-    postedAt: new Date().toISOString(),
-    source: "openrouter",
-    cached: false,
-  };
-
-  setCachedGeneration(cacheKey, body, now);
-  return NextResponse.json(body);
 }
 
 async function callOpenRouter(

@@ -42,6 +42,7 @@ export function GenerateSummaryButton({ issueKey, accessParam }: GenerateSummary
       const body = (await response.json()) as
         | { status: "ready"; commentId: string }
         | { status: "exists"; message: string }
+        | { status: "in-flight"; message: string }
         | { status: "error"; message: string };
 
       if (response.status === 409 && body.status === "exists") {
@@ -50,6 +51,18 @@ export function GenerateSummaryButton({ issueKey, accessParam }: GenerateSummary
         setState({ kind: "done" });
         router.refresh();
         window.setTimeout(() => setState({ kind: "idle" }), 5000);
+        return;
+      }
+
+      if (response.status === 409 && body.status === "in-flight") {
+        // Double-tap landed during another generation. Don't treat as
+        // an error — the original tap is still running and will post
+        // the comment. Surface a soft hint and let router.refresh
+        // pull the new comment when it lands.
+        setState({
+          kind: "error",
+          message: "Buddy is already writing this summary — hold tight.",
+        });
         return;
       }
 

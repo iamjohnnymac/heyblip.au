@@ -9,9 +9,12 @@ import assert from "node:assert/strict";
 import {
   buildGenerateSummarySystemPrompt,
   buildGenerateSummaryUserPayload,
+  clearGenerationInFlight,
   getCachedGeneration,
   inferStatusMode,
+  isGenerationInFlight,
   looksLikeAgentTestUpdate,
+  markGenerationInFlight,
   setCachedGeneration,
   unwrapOuterCodeFence,
 } from "./generate-summary-prompt.ts";
@@ -204,4 +207,30 @@ test("generation cache returns the cached body within 30s and expires after", ()
 
 test("generation cache returns null for an unknown key", () => {
   assert.equal(getCachedGeneration("generate:UNKNOWN", Date.now()), null);
+});
+
+test("in-flight lock blocks a second tap during a long OpenRouter call", () => {
+  const key = "generate:BDEV-705";
+  const now = 1_700_000_000_000;
+  // No lock initially.
+  assert.equal(isGenerationInFlight(key, now), false);
+  // First tap takes the lock.
+  markGenerationInFlight(key, now);
+  assert.equal(isGenerationInFlight(key, now + 5_000), true);
+  // Second tap 5s later still sees the lock — would 409 in the route.
+  assert.equal(isGenerationInFlight(key, now + 5_000), true);
+  // Tap releases the lock at the end of its handler (try/finally).
+  clearGenerationInFlight(key);
+  assert.equal(isGenerationInFlight(key, now + 5_000), false);
+});
+
+test("in-flight lock auto-expires after 60s so a stuck handler doesn't block forever", () => {
+  const key = "generate:BDEV-706";
+  const now = 1_700_000_000_000;
+  markGenerationInFlight(key, now);
+  // Inside the TTL: still locked.
+  assert.equal(isGenerationInFlight(key, now + 30_000), true);
+  // Past the 60s TTL: the lock auto-clears even if the original
+  // handler never reached its finally block (server restart, crash).
+  assert.equal(isGenerationInFlight(key, now + 60_001), false);
 });

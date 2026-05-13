@@ -144,15 +144,16 @@ export async function POST(request: Request) {
       const coach = await buildHaikuCoach(checklist.data, fallback, openRouterApiKey, payload.currentStepIndex);
       return NextResponse.json({ status: "ready", source: "haiku" satisfies CoachSource, coach });
     } catch (error) {
-      if (process.env.NODE_ENV !== "production") {
-        console.warn(
-          "Haiku coach failed:",
-          error instanceof Error ? error.message : "Unknown error",
-        );
-      }
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      console.warn("Haiku coach failed:", detail);
+      // Surface a user-visible message so the page can hint "the AI
+      // didn't reply, this is the deterministic guide" instead of
+      // silently degrading to a generic fallback that looks like the
+      // real coach response.
       return NextResponse.json({
         status: "ready",
         source: "fallback",
+        message: "Buddy's AI coach didn't reply — showing the deterministic checklist coach instead.",
         coach: fallback,
       });
     }
