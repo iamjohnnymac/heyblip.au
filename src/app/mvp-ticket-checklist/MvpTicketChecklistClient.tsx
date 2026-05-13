@@ -413,7 +413,7 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     {
       title: "Try the bug once",
       body: aiPhoneInstruction
-        ? `${shortTestInstruction(aiPhoneInstruction, workKind)} ${aiPhonePlan.length > 1 ? "Full plan in step 1's panel above." : ""}`.trim()
+        ? shortTestInstruction(aiPhoneInstruction, workKind)
         : shortTestInstruction(
             phoneStep?.doThis ||
               data.recommendedAction.steps[0] ||
@@ -1471,7 +1471,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               </DisclosurePanel>
 
               <DisclosurePanel
-                title="Debug & ticket actions"
+                title="Ticket actions"
                 icon={<Settings size={18} />}
                 badge="Open Jira · Mark anyway · Clear ticks"
               >
@@ -1502,7 +1502,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-white">Mark done anyway</p>
                         <p className="mt-0.5 text-xs leading-5 text-[var(--muted-strong)]">
-                          Local-only override — ticks this step without using the AI verification flow. Same effect as the primary CTA above.
+                          Local-only override — ticks this step without writing to Jira. Useful when you want to skip the AI verification flow on the current step.
                         </p>
                       </div>
                     </button>
