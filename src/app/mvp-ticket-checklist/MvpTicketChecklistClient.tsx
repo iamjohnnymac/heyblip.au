@@ -25,6 +25,7 @@ import { QueueBreadcrumb } from "./_components/QueueBreadcrumb";
 import { StepTabs, type StepTab } from "./_components/StepTabs";
 import { FocusCard } from "./_components/FocusCard";
 import { AgentTestSummaryPanel, AgentTestSummaryChip } from "./_components/AgentTestSummary";
+import { GenerateSummaryButton } from "./_components/GenerateSummaryButton";
 import {
   FindingsPanel,
   VerdictActionButtons,
@@ -240,6 +241,17 @@ function splitValues(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+// Should the "Generate AI Summary" button render on this ticket?
+// Yes for tickets the AI has touched or is mid-touching — Verifying,
+// In Review, Ready for Review, In Progress. No for To Do / Selected /
+// Backlog tickets, where the existing Send to Codex/Claude flow is the
+// right starting point.
+function shouldShowGenerateButton(status: string): boolean {
+  const s = (status || "").toLowerCase().trim();
+  if (!s) return false;
+  return /^(verifying|in review|ready for review|in progress|in-progress)$/.test(s);
 }
 
 function currentStageIndex(stage: string): number {
@@ -1181,6 +1193,13 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               {currentStepIndex === 0 ? (
                 <div className="grid gap-4">
                   <AgentTestSummaryPanel agentUpdate={humanTestPlan.agentUpdate} />
+                  {/* Generate AI Summary — only when no summary exists yet
+                      AND the ticket is mid-flight (Verifying / In Progress
+                      / In Review). To Do tickets keep the existing
+                      Send to Codex/Claude flow below. */}
+                  {!hasAgentProof && shouldShowGenerateButton(data.status) ? (
+                    <GenerateSummaryButton issueKey={data.issueKey} accessParam={accessParam} />
+                  ) : null}
                   <PastHumanTestResultsPanel results={humanTestResults} />
                 </div>
               ) : currentStepIndex === 1 || currentStepIndex === 2 ? (

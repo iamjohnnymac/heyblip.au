@@ -57,6 +57,7 @@ type FetchState =
 type FilterKey =
   | "all"
   | "ready"
+  | "backlog"
   | "launch-blockers"
   | "has-ai-summary"
   | "high-priority";
@@ -88,12 +89,23 @@ function isWaiting(row: QueueRowView): boolean {
   return status === "selected" || stage === "selected";
 }
 
+// "Not yet picked up" — vanilla To Do tickets that no AI has started on
+// yet. Anything in another bucket (ready / in-progress / waiting) wins
+// first so the same ticket doesn't render twice.
+function isBacklog(row: QueueRowView): boolean {
+  if (isReady(row) || isInProgress(row) || isWaiting(row)) return false;
+  const status = row.status.toLowerCase();
+  return status === "to do" || status === "todo" || status === "open" || status === "backlog";
+}
+
 function matchesFilter(row: QueueRowView, filter: FilterKey): boolean {
   switch (filter) {
     case "all":
       return true;
     case "ready":
       return isReady(row);
+    case "backlog":
+      return isBacklog(row);
     case "launch-blockers":
       return row.labels.some((label) => label.toLowerCase() === "launch-blocker");
     case "has-ai-summary":
@@ -198,12 +210,14 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
     const result = {
       all: rows.length,
       ready: 0,
+      backlog: 0,
       "launch-blockers": 0,
       "has-ai-summary": 0,
       "high-priority": 0,
     } as Record<FilterKey, number>;
     for (const row of rows) {
       if (isReady(row)) result.ready += 1;
+      if (isBacklog(row)) result.backlog += 1;
       if (row.labels.some((label) => label.toLowerCase() === "launch-blocker"))
         result["launch-blockers"] += 1;
       if (row.hasAgentTestUpdate) result["has-ai-summary"] += 1;
@@ -221,6 +235,7 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
   const readyRows = useMemo(() => filteredRows.filter(isReady), [filteredRows]);
   const inProgressRows = useMemo(() => filteredRows.filter(isInProgress), [filteredRows]);
   const waitingRows = useMemo(() => filteredRows.filter(isWaiting), [filteredRows]);
+  const backlogRows = useMemo(() => filteredRows.filter(isBacklog), [filteredRows]);
 
   const topPick = rows.find(isReady);
 
@@ -258,6 +273,7 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
             dotClass="bg-emerald-400"
             rows={readyRows}
             accessParam={accessParam}
+            accessParamForGenerate={accessParam}
           />
           <GroupSection
             title="In progress"
@@ -265,6 +281,7 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
             dotClass="bg-sky-400"
             rows={inProgressRows}
             accessParam={accessParam}
+            accessParamForGenerate={accessParam}
           />
           <GroupSection
             title="Waiting to start"
@@ -272,6 +289,21 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
             dotClass="bg-white/40"
             rows={waitingRows}
             accessParam={accessParam}
+            accessParamForGenerate={accessParam}
+          />
+          {/* New: backlog section. Sits after Waiting because the reading
+              order is urgency-descending: ready (test now) → in progress
+              (AI working) → waiting (scheduled) → backlog (untouched).
+              The muted purple dot signals "purple = AI-aware but not yet
+              acted on" without competing with the green Ready dot.   */}
+          <GroupSection
+            title="Not yet picked up"
+            tagline="Sitting in the backlog · AI hasn't started"
+            dotClass="bg-[var(--accent)]/60"
+            rows={backlogRows}
+            accessParam={accessParam}
+            accessParamForGenerate={accessParam}
+            emptyMessage="No tickets sitting in the backlog right now."
           />
 
           <p className="mt-10 text-center text-xs text-[var(--muted)]">
@@ -387,6 +419,7 @@ function FilterChipRow({
   const chips: { key: FilterKey; label: string }[] = [
     { key: "all", label: "All" },
     { key: "ready", label: "Ready for me" },
+    { key: "backlog", label: "Backlog" },
     { key: "launch-blockers", label: "Launch blockers" },
     { key: "has-ai-summary", label: "Has AI summary" },
     { key: "high-priority", label: "Highest / High" },
@@ -432,12 +465,18 @@ function GroupSection({
   dotClass,
   rows,
   accessParam,
+  accessParamForGenerate,
+  emptyMessage,
 }: {
   title: string;
   tagline: string;
   dotClass: string;
   rows: QueueRowView[];
   accessParam: string;
+  // Pass-through used by the per-card Generate AI Summary action — kept
+  // separate from accessParam in case we ever want a finer-grained gate.
+  accessParamForGenerate: string;
+  emptyMessage?: string;
 }) {
   return (
     <section className="mb-10">
@@ -450,12 +489,17 @@ function GroupSection({
       </div>
       {rows.length === 0 ? (
         <p className="rounded-2xl border border-[var(--border)] bg-white/[0.015] px-4 py-6 text-center text-sm text-[var(--muted)]">
-          No tickets in this group right now.
+          {emptyMessage || "No tickets in this group right now."}
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {rows.map((row) => (
-            <QueueCard key={row.issueKey} row={row} accessParam={accessParam} />
+            <QueueCard
+              key={row.issueKey}
+              row={row}
+              accessParam={accessParam}
+              accessParamForGenerate={accessParamForGenerate}
+            />
           ))}
         </div>
       )}

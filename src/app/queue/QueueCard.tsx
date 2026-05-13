@@ -1,20 +1,32 @@
 "use client";
 
-// Single card in the /queue overview. One ticket = one card. Whole card is
-// a link to the existing checklist page; the page itself doesn't fetch
-// anything — all data is passed in.
+// Single card in the /queue overview. One ticket = one card. The whole
+// card surface is a tappable link to the detail page, BUT the AI summary
+// pill is a real <button> (interactive — fires the Generate API). To
+// avoid nesting a <button> inside an <a> (invalid HTML, breaks hydration
+// in React 19), the outer container is an <article> with an
+// absolute-positioned Link covering the click area as a sibling of the
+// interactive controls. The button sits above the link via z-index so
+// taps on the pill don't navigate.
 //
 // Visual target: design/queue-mockup.html (.card / .pill rules). Plain
 // English language only — no "agent", "STOP", or "Verified Build/Commit"
 // language reaches the user here.
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Route } from "next";
+import { Loader2, Sparkles } from "lucide-react";
 import type { QueueRowView } from "./QueueClient";
 
 type Props = {
   row: QueueRowView;
   accessParam: string;
+  // Pass-through used by the per-card Generate AI Summary action. Same
+  // value as accessParam in practice; kept as a separate prop so the
+  // caller can swap in a tighter gate without touching every link href.
+  accessParamForGenerate: string;
 };
 
 function priorityPillClass(priority: string): string {
@@ -44,7 +56,14 @@ function formatAge(hours: number, status: string): string {
   return `${days}d in ${status}`;
 }
 
-export default function QueueCard({ row, accessParam }: Props) {
+type GenerateState =
+  | { kind: "idle" }
+  | { kind: "submitting" }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
+
+export default function QueueCard({ row, accessParam, accessParamForGenerate }: Props) {
+  const router = useRouter();
   const href = (
     accessParam
       ? `/mvp-ticket-checklist?issue=${encodeURIComponent(row.issueKey)}&access=${encodeURIComponent(accessParam)}`
@@ -54,12 +73,61 @@ export default function QueueCard({ row, accessParam }: Props) {
   const isLaunchBlocker = row.labels.some((label) => label.toLowerCase() === "launch-blocker");
   const blocksCount = row.blocksKeys.length;
 
+  const [generateState, setGenerateState] = useState<GenerateState>({ kind: "idle" });
+
+  async function handleGenerate() {
+    setGenerateState({ kind: "submitting" });
+    try {
+      const response = await fetch("/api/mvp-ticket-checklist/generate-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issue: row.issueKey,
+          access: accessParamForGenerate,
+        }),
+      });
+      const body = (await response.json()) as
+        | { status: "ready"; commentId: string }
+        | { status: "exists"; message: string }
+        | { status: "error"; message: string };
+
+      if (response.status === 409 && body.status === "exists") {
+        // Already posted (e.g. another tab raced us) — treat as success
+        // and let the queue re-fetch reveal the new "AI summary" pill.
+        setGenerateState({ kind: "done" });
+        router.refresh();
+        return;
+      }
+
+      if (!response.ok || body.status !== "ready") {
+        const message =
+          "message" in body && body.message ? body.message : "Buddy couldn't generate this.";
+        setGenerateState({ kind: "error", message });
+        return;
+      }
+
+      setGenerateState({ kind: "done" });
+      router.refresh();
+    } catch {
+      setGenerateState({ kind: "error", message: "Buddy couldn't reach the server." });
+    }
+  }
+
+  const generateBusy =
+    generateState.kind === "submitting" || generateState.kind === "done";
+
   return (
-    <Link
-      href={href}
-      className="group relative flex min-h-[168px] flex-col gap-2.5 rounded-2xl border border-[var(--border)] bg-white/[0.03] p-[1.05rem] transition-all duration-150 hover:-translate-y-px hover:border-[var(--accent)]/45 hover:bg-white/[0.055] hover:shadow-[0_12px_36px_rgba(102,0,255,0.18)] focus-visible:-translate-y-px focus-visible:border-[var(--accent)]/45 focus-visible:bg-white/[0.055]"
-    >
-      <div className="flex items-center justify-between gap-2">
+    <article className="group relative flex min-h-[168px] flex-col gap-2.5 rounded-2xl border border-[var(--border)] bg-white/[0.03] p-[1.05rem] transition-all duration-150 hover:-translate-y-px hover:border-[var(--accent)]/45 hover:bg-white/[0.055] hover:shadow-[0_12px_36px_rgba(102,0,255,0.18)] focus-within:-translate-y-px focus-within:border-[var(--accent)]/45 focus-within:bg-white/[0.055]">
+      {/* The whole card is a link — absolute so it doesn't enclose the
+          interactive Generate button (invalid <button> inside <a>). The
+          button below sits on z-10, above this. */}
+      <Link
+        href={href}
+        aria-label={`Open ${row.issueKey}: ${row.summary}`}
+        className="absolute inset-0 z-0 rounded-2xl focus:outline-none"
+      />
+
+      <div className="relative z-10 flex items-center justify-between gap-2">
         <span className="text-[0.78rem] font-extrabold tracking-wide text-[var(--accent-light)]">
           {row.issueKey}
         </span>
@@ -68,11 +136,11 @@ export default function QueueCard({ row, accessParam }: Props) {
         </span>
       </div>
 
-      <p className="line-clamp-2 text-[0.95rem] font-semibold leading-snug text-white">
+      <p className="relative z-10 line-clamp-2 text-[0.95rem] font-semibold leading-snug text-white">
         {row.summary}
       </p>
 
-      <div className="mt-auto flex flex-wrap gap-1.5">
+      <div className="relative z-10 mt-auto flex flex-wrap gap-1.5">
         {row.priority ? (
           <span
             className={`inline-flex items-center rounded-full border px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none ${priorityPillClass(row.priority)}`}
@@ -95,9 +163,52 @@ export default function QueueCard({ row, accessParam }: Props) {
             AI summary
           </span>
         ) : (
-          <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-white/[0.02] px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-[var(--muted)]">
-            No AI summary yet
-          </span>
+          // No AI summary yet → swap the muted "No AI summary" pill for a
+          // tappable Generate pill. Tap fires the same POST as the detail
+          // page button. min-h-9 keeps it 44pt-friendly for iOS taps.
+          <button
+            type="button"
+            onClick={() => {
+              if (generateBusy) return;
+              void handleGenerate();
+            }}
+            disabled={generateBusy}
+            aria-busy={generateState.kind === "submitting"}
+            title={
+              generateState.kind === "error"
+                ? `Generate failed: ${generateState.message}. Tap to retry.`
+                : "Ask the AI to write a test summary for this ticket."
+            }
+            className={`relative inline-flex min-h-9 items-center gap-1 rounded-full border px-2.5 py-[0.18rem] text-[0.66rem] font-bold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+              generateState.kind === "done"
+                ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-100"
+                : generateState.kind === "error"
+                  ? "border-red-300/45 bg-red-300/10 text-red-100 hover:bg-red-300/15"
+                  : "border-[var(--accent)]/40 bg-[var(--accent)]/10 text-[var(--accent-light)] hover:bg-[var(--accent)]/20"
+            }`}
+          >
+            {generateState.kind === "submitting" ? (
+              <>
+                <Loader2 size={11} className="animate-spin" strokeWidth={3} />
+                Generating
+              </>
+            ) : generateState.kind === "done" ? (
+              <>
+                <Sparkles size={11} strokeWidth={3} />
+                Summary posted
+              </>
+            ) : generateState.kind === "error" ? (
+              <>
+                <Sparkles size={11} strokeWidth={3} />
+                Retry generate
+              </>
+            ) : (
+              <>
+                <Sparkles size={11} strokeWidth={3} />
+                Generate
+              </>
+            )}
+          </button>
         )}
         {row.hasBuild && row.verifiedBuildOrCommit ? (
           <span className="inline-flex items-center rounded-full border border-sky-300/35 bg-sky-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-sky-100">
@@ -110,6 +221,6 @@ export default function QueueCard({ row, accessParam }: Props) {
           </span>
         ) : null}
       </div>
-    </Link>
+    </article>
   );
 }
