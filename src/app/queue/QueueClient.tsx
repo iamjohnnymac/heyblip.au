@@ -483,7 +483,7 @@ function FilterChipRow({
     { key: "high-priority", label: "Top priority" },
   ];
   return (
-    <div className="mb-8 -mx-2 flex flex-nowrap items-center gap-2 overflow-x-auto px-2 pb-1 sm:flex-wrap sm:overflow-visible">
+    <div className="mb-8 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
       {chips.map(({ key, label }) => {
         const isActive = filter === key;
         const count = counts[key] ?? 0;
