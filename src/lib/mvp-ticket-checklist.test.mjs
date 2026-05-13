@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   adfToPlainText,
   buildChecklistViewModel,
+  extractTestExpectations,
   getRecommendedAction,
   normalizeIssueKey,
 } from "./mvp-ticket-checklist.ts";
@@ -561,4 +562,42 @@ test("uses concrete proof recipe details when Jira provides them", () => {
   assert.equal(viewModel.proofRecipe.foundStructuredRecipe, true);
   assert.ok(viewModel.proofRecipe.requirements.find((item) => item.surface === "Automated").hasConcreteProof);
   assert.ok(viewModel.codingAgentPrompt.includes("AuthToken404RecoveryTests"));
+});
+
+test("extractTestExpectations pulls Pass if / Fail if from canonical BDEV-490 prose", () => {
+  const result = extractTestExpectations(
+    "Delete the app. Install build 65 from TestFlight. Pass if the app reaches the main UI with no registration error dialog and no `Too many requests` follow-up. Fail if either dialog appears, if Retry must be tapped more than once, or if onboarding gets stuck on the profile screen. Repeat the flow once more.",
+  );
+  assert.equal(
+    result.passIf,
+    "the app reaches the main UI with no registration error dialog and no `Too many requests` follow-up",
+  );
+  assert.equal(
+    result.failIf,
+    "either dialog appears, if Retry must be tapped more than once, or if onboarding gets stuck on the profile screen",
+  );
+});
+
+test("extractTestExpectations returns empty strings when the AI didn't use the canonical phrasing", () => {
+  const result = extractTestExpectations(
+    "Walk through the friend-request flow on build 60 and confirm the banner appears.",
+  );
+  assert.equal(result.passIf, "");
+  assert.equal(result.failIf, "");
+});
+
+test("extractTestExpectations handles fail-only prose without bleeding into pass", () => {
+  const result = extractTestExpectations(
+    "Run the test. Fail if you see a crash dialog or stuck spinner.",
+  );
+  assert.equal(result.passIf, "");
+  assert.equal(result.failIf, "you see a crash dialog or stuck spinner");
+});
+
+test("extractTestExpectations is case-insensitive and trims trailing punctuation", () => {
+  const result = extractTestExpectations(
+    "PASS IF the banner shows. FAIL IF no banner.",
+  );
+  assert.equal(result.passIf, "the banner shows");
+  assert.equal(result.failIf, "no banner");
 });

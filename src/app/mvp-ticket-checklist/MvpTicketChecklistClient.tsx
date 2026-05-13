@@ -211,6 +211,8 @@ const emptyHumanTestPlan: ChecklistViewModel["humanTestPlan"] = {
       simulator: "Not reported",
       workerSmoke: "Not reported",
     },
+    passIf: "",
+    failIf: "",
   },
   steps: [],
 };
@@ -365,28 +367,28 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
   return [
     {
       title: plan.agentUpdate.found
-        ? "Read what the AI tested"
+        ? "Here's what to test"
         : aiDoneNoFormalPlan
           ? "AI's done — no formal test plan was posted"
           : notStarted
             ? "Send this to an AI to start"
             : "AI is still coding this",
       body: plan.agentUpdate.found
-        ? "The AI's summary is below — you don't need to leave Buddy. It tells you what changed, the build to install, and the exact thing to look for on your phone."
+        ? "Here's what changed, the build to install, and what to look for on your phone."
         : aiDoneNoFormalPlan
           ? "The fix is merged but nobody posted a structured 'Agent Test Update' comment. Use the ticket description (and your judgment) as the test guide. Step 3 below pulls it through."
           : notStarted
             ? "No AI has picked this up yet. Tap a green button below to send the prompt to Codex or Claude — the AI will do the coding and post a summary back to Jira."
             : "An AI is writing the fix. When it posts a summary in Jira (a comment titled 'Agent Test Update'), this card turns green and it's your turn.",
       pass: plan.agentUpdate.found
-        ? "The summary below has real commands or a build number — not [Passed / Failed] placeholders."
+        ? plan.agentUpdate.passIf || "The summary below has real commands or a build number — not [Passed / Failed] placeholders."
         : aiDoneNoFormalPlan
           ? "You've read the ticket description and you understand what changed."
           : notStarted
             ? "After you send it: an AI takes the prompt, does the work, and posts a summary in Jira."
             : "The AI's summary appears in Jira with real values, not template placeholders.",
       fail: plan.agentUpdate.found
-        ? "The summary is vague, missing the build, or still has [Passed / Failed] placeholders."
+        ? plan.agentUpdate.failIf || "The summary is vague, missing the build, or still has [Passed / Failed] placeholders."
         : aiDoneNoFormalPlan
           ? "The ticket description doesn't have enough info to test it. Reopen with what's missing."
           : notStarted
@@ -413,9 +415,11 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
             workKind,
           ),
       pass: capitalizeFirst(
-        aiPhonePassHint || phoneStep?.passMeans || "The bug no longer happens.",
+        plan.agentUpdate.passIf || aiPhonePassHint || phoneStep?.passMeans || "The bug no longer happens.",
       ),
-      fail: capitalizeFirst(phoneStep?.failMeans || "The bug still happens, or the result is confusing."),
+      fail: capitalizeFirst(
+        plan.agentUpdate.failIf || phoneStep?.failMeans || "The bug still happens, or the result is confusing.",
+      ),
     },
     {
       title: "Write pass or fail",
@@ -429,10 +433,10 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
 // Short step labels for the StepTabs strip — match the mockup's compact
 // labels (not the full sentences inside the focus card body).
 function shortStepLabel(step: StudentTestStep | undefined, index: number): string {
-  const fallback = ["Read what the AI tested", "Install the build", "Try the bug", "Write pass or fail"][index];
+  const fallback = ["Read the plan", "Install the build", "Try the bug", "Write pass or fail"][index];
   if (!step) return fallback || `Step ${index + 1}`;
   const title = step.title.toLowerCase();
-  if (title.includes("read what the ai")) return "Read what the AI tested";
+  if (title.includes("here's what to test") || title.includes("read what the ai")) return "Read the plan";
   if (title.includes("send this to an ai")) return "Send to an AI";
   if (title.includes("ai is still coding")) return "AI is coding";
   if (title.includes("no formal test plan")) return "Read the ticket";

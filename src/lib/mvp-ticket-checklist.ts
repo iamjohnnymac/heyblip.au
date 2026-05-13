@@ -498,6 +498,13 @@ export type AgentTestUpdateViewModel = {
     simulator: string;
     workerSmoke: string;
   };
+  // Concrete observable expectations pulled from the AI's prose so the
+  // step card can show "you'll know it worked when X / something's off
+  // if Y" without the tester having to scan the comment themselves.
+  // Empty strings when the AI didn't write the canonical "Pass if … / Fail
+  // if …" phrasing.
+  passIf: string;
+  failIf: string;
   source?: {
     author: string;
     created: string;
@@ -1901,6 +1908,8 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
         simulator: "Not reported",
         workerSmoke: "Not reported",
       },
+      passIf: "",
+      failIf: "",
     };
   }
 
@@ -1927,6 +1936,7 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
     parseHumanTestRequested(humanTestLines);
   const humanTestRequested = humanTestLines.join(" ");
   const sentryWatchIds = extractSentryIds(humanTestLines.join("\n"));
+  const { passIf, failIf } = extractTestExpectations(humanTestRequested);
 
   return {
     found: true,
@@ -1944,6 +1954,8 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
       simulator: readLabeledValue(comment.text, "Simulator") || "Not reported",
       workerSmoke: readLabeledValue(comment.text, "Worker smoke") || "Not reported",
     },
+    passIf,
+    failIf,
     source: {
       author: comment.author,
       created: comment.created,
@@ -2084,6 +2096,43 @@ function splitBacktickSegments(value: string): HumanTestRequestedSegment[] {
     segments.push({ kind: idx % 2 === 0 ? "text" : "code", value: chunk });
   });
   return segments;
+}
+
+// Pulls the AI's "Pass if X. Fail if Y." sentences out of the test plan so
+// the step card can show concrete observable expectations instead of meta
+// "the AI's summary should have real commands" placeholder copy.
+//
+// Each capture stops at the *next* "Pass if" / "Fail if" or the end of the
+// sentence (period before a capital letter or end of string), then strips
+// the leading "Pass if " / "Fail if " so the rendered chip reads as a
+// continuation of the "You'll know it worked when:" label.
+//
+// Returns "" for either field when the AI didn't use the canonical phrasing.
+export function extractTestExpectations(text: string): {
+  passIf: string;
+  failIf: string;
+} {
+  if (!text) return { passIf: "", failIf: "" };
+
+  const captureAfter = (marker: RegExp): string => {
+    const match = text.match(marker);
+    if (!match || match.index === undefined) return "";
+    const rest = text.slice(match.index + match[0].length);
+    // Stop at the next Pass/Fail marker so we don't bleed Pass into Fail.
+    const stopMatch = rest.match(/\b(?:pass|fail)\s+if\b/i);
+    let segment = stopMatch && stopMatch.index !== undefined ? rest.slice(0, stopMatch.index) : rest;
+    // Trim trailing whitespace + the period before the next sentence-cased
+    // word ("…clean. Repeat the delete/reinstall…") so we don't pull two
+    // sentences in when only one was the expectation.
+    const sentenceMatch = segment.match(/^([\s\S]*?[.!?])\s+[A-Z]/);
+    if (sentenceMatch) segment = sentenceMatch[1];
+    return segment.trim().replace(/[.!?,;\s]+$/, "");
+  };
+
+  return {
+    passIf: captureAfter(/\bpass\s+if\s+/i),
+    failIf: captureAfter(/\bfail\s+if\s+/i),
+  };
 }
 
 function extractSentryIds(text: string): string[] {
