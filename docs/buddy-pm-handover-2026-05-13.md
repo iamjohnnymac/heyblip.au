@@ -189,110 +189,89 @@ Walked BDEV-352 (the WS reconnect coalescing test):
 - Surface chips render with correct icons (AUTOMATED ✓ green, SIMULATOR
   ✓ green, WORKER SMOKE — grey N/A)
 
-## What's in flight RIGHT NOW
+## What landed AFTER this handover was first written (end of session 2026-05-13 ~13:00 AWST)
 
-Two opus build agents are running in parallel in isolated git worktrees
-off `improvements/test-buddy-clarity-and-coach-tighten` HEAD `7af1404`.
-They have **zero file overlap** by design — they will not conflict.
+The two build agents finished, their branches were merged, two visual
+nesting bugs were caught + fixed + deployed, and visual verification
+was completed end-to-end on desktop + mobile. **Everything described
+in the original "What's in flight" plan below is now live on the orcin
+URL.**
 
-### Agent A — Queue overview page
+### Build agents — both landed
 
-- Agent ID: `af634aafbe32340b0` (general-purpose, opus, run_in_background)
-- Worktree: `C:\Users\john_\OneDrive\Documents\Claude\Projects\heyblip\heyblip-au-fork-queue`
-- Branch: `feat/queue-page-build`
-- Owns:
-  - `src/lib/ticket-queue.ts` — adds 3 fields: `labels: string[]`,
-    `hasAgentTestUpdate: boolean`, `hasHumanTestResult: boolean`. Adds
-    `"labels"` and `"comment"` to `QUEUE_FIELDS`. Tests for each in
-    `src/lib/ticket-queue.test.mjs` (new file).
-  - `src/app/api/mvp-ticket-checklist/queue/route.ts` — accept
-    `?limit=all` query param. Default `TOP_N` behavior unchanged.
-  - `src/app/queue/page.tsx` (new, ~60 LOC) — server component.
-  - `src/app/queue/QueueClient.tsx` (new, ~280 LOC) — client.
-  - `src/app/queue/QueueCard.tsx` (new, ~80 LOC) — single card.
-- Reference mockup: `design/queue-mockup.html`
-- Expected output: ~460 LOC across 5 files. Three vertically-stacked
-  grouped sections (Ready for you / In progress / Waiting to start),
-  filter chip row with counts, purple "Buddy suggests next" banner,
-  rounded-2xl cards, mobile single-column at 375px.
+#### Queue overview page — `feat/queue-page-build` (now merged, branch deleted)
 
-### Agent B — Detail page redesign
+- 2 commits: `7a84c35` (lib + API extensions) + `2a18af2` (queue page)
+- 3 new files: `src/app/queue/page.tsx`, `QueueClient.tsx`, `QueueCard.tsx`
+- 2 modified: `src/lib/ticket-queue.ts` (added `labels`, `hasAgentTestUpdate`, `hasHumanTestResult` fields + `"labels"`/`"comment"` in `QUEUE_FIELDS`), `src/app/api/mvp-ticket-checklist/queue/route.ts` (accepts `?limit=all`)
+- 8 new tests in `src/lib/ticket-queue.test.mjs`; total 61 tests now
+- **Two honest judgment calls** the agent made:
+  - Dropped the "Track: All" filter chip (would've needed a dropdown/multi-select → broke "one thing on the page")
+  - Dropped per-ticket stage progress bars on "In progress" cards (no stage-percent data; would've been arbitrary numbers → broke "honest UI states")
 
-- Agent ID: `aab861bee765b30b2` (general-purpose, opus, run_in_background)
-- Worktree: `C:\Users\john_\OneDrive\Documents\Claude\Projects\heyblip\heyblip-au-fork-detail`
-- Branch: `feat/detail-redesign-build`
-- Owns:
-  - `src/app/mvp-ticket-checklist/MvpTicketChecklistClient.tsx` —
-    major rewrite. Today: 3020 lines. Target: ~1900 lines. Preserves
-    all internal logic (AgentTestSummaryPanel, FindingsPanel,
-    VerdictCard, PastHumanTestResultsPanel, DisclosurePanel,
-    `classifySurfaceResult`, all helpers, all polling, all coach
-    integration, all transition state machine). Removes: the
-    `BuddySuggestionStrip`, the duplicated progress UI, the floating
-    `BlipMascotGuide` widget, the tertiary action row.
-  - `src/app/mvp-ticket-checklist/_components/StepTabs.tsx` (new) —
-    4-tab strip (combined progress + nav, replaces today's two pieces).
-  - `src/app/mvp-ticket-checklist/_components/FocusCard.tsx` (new) —
-    the rounded-3xl per-step container.
-  - `src/app/mvp-ticket-checklist/_components/QueueBreadcrumb.tsx`
-    (new) — lean "← Queue · 3 of 7 ready · BDEV-486 next" breadcrumb.
-- Reference mockup: `design/detail-mockup.html` (toggle `#step1` / `#step4`)
-- Expected: page collapses from 12 visible things to 4. One focus card
-  per step. Step 1 contains the AI summary inline. Step 2-3 collapse
-  the AI summary to a chip. Step 4 swaps focus card body for Findings
-  + Verdict. **On mobile Step 4 the 3 verdict action buttons stick to
-  the bottom of the viewport** via `position: sticky bottom-0` so John
-  can commit without scrolling back up after typing findings. The 5
-  disclosure panels become collapsed `<details>` accordion rows below
-  the focus card. A "Debug & ticket actions" drawer at the bottom
-  holds Open Jira / Mark done anyway / Clear ticks.
+#### Detail page redesign — `feat/detail-redesign-build` (now merged, branch deleted)
 
-### When both return — your job
+- 2 commits: `4180e30` (extract 10 component files) + `57feb37` (rewrite JSX shell)
+- `MvpTicketChecklistClient.tsx` shrunk **3020 → 1522 lines** (50% smaller, well under the ~1900 target)
+- 10 new component files under `src/app/mvp-ticket-checklist/_components/`:
+  `StepTabs`, `FocusCard`, `QueueBreadcrumb`, `AgentTestSummary`,
+  `FindingsPanel`, `PastHumanTestResults`, `AskBuddyInline`,
+  `ErrorPanel`, `SmallComponents`, `shared.ts`
+- Visible layout now: QueueBreadcrumb → ticket identity row → StepTabs
+  → FocusCard (step-specific body) → Ask Buddy inline button → 6
+  `DisclosurePanel` drawers (5 content + 1 "Debug & ticket actions")
+- Step 1: AgentTestSummaryPanel inline + past results
+- Steps 2-3: `AgentTestSummaryChip` (collapsed, expandable) + past results
+- Step 4: FindingsPanel + verdict card if submitted + past results
+- Mobile Step 4: 3 verdict action buttons render in a `position:sticky bottom-0` action bar with `env(safe-area-inset-bottom)` padding when the verdict card is showing on `<md` viewports
+- Step tabs collapse to 2×2 grid on mobile (`md:flex-row flex-wrap`)
 
-1. Read each agent's report. Verify tests + tsc + lint + build pass.
-2. From the **main worktree** (`heyblip-au-fork-clone`), merge first
-   `feat/queue-page-build` (smaller surface, lower risk):
-   ```bash
-   cd C:/Users/john_/OneDrive/Documents/Claude/Projects/heyblip/heyblip-au-fork-clone
-   git merge feat/queue-page-build --no-ff -m "merge(buddy): queue overview page (Concept A)"
-   ```
-3. Then merge `feat/detail-redesign-build`:
-   ```bash
-   git merge feat/detail-redesign-build --no-ff -m "merge(buddy): detail page redesign (Concept A)"
-   ```
-   Conflicts should be impossible given the file-boundary contract,
-   but if they happen, queue-agent's `ticket-queue.ts` changes win
-   (they're additive; detail agent shouldn't have touched it).
-4. Run the full verification on the merged main worktree:
-   ```bash
-   node --test src/lib/*.test.mjs
-   npx tsc --noEmit
-   npm run lint
-   npm run build
-   ```
-5. Push: `git push origin improvements/test-buddy-clarity-and-coach-tighten`
-6. Deploy:
-   ```bash
-   npx vercel deploy --prod --yes --token=<token>
-   ```
-   (The token used this session — `vcp_2wdlx11BFSHm…` — is in chat
-   history; **rotate it after using**.)
-7. Visual smoke-test on Chrome MCP:
-   - `https://heyblipau-orcin.vercel.app/queue?access=b32c74f88b271c544fb51cf68420a505`
-   - `https://heyblipau-orcin.vercel.app/mvp-ticket-checklist?issue=BDEV-352&access=b32c74f88b271c544fb51cf68420a505`
-   - Verify mobile collapse at 375px viewport on both
-   - Verify the queue card click → detail page navigation works
-   - Verify the QueueBreadcrumb on detail page shows position
-   - Verify Step 4 sticky action bar appears on mobile when a verdict
-     card is showing
-8. Clean up the worktrees:
-   ```bash
-   git worktree remove ../heyblip-au-fork-queue --force
-   git worktree remove ../heyblip-au-fork-detail --force
-   git branch -d feat/queue-page-build feat/detail-redesign-build
-   ```
-9. Tell John, plain English, with the live URL + the three things he
-   should personally check.
+### Merge + deploy + nesting fixes (end-of-session sequence)
+
+In commit order on the Buddy branch:
+
+5. **`6017177`** — `merge(buddy): queue overview page (Concept A) — feat/queue-page-build` + `merge(buddy): detail page redesign (Concept A) — feat/detail-redesign-build`. Both feature branches merged cleanly, no conflicts (file-boundary contract held). Tests + tsc + lint + build all green. Pushed + deployed via `vercel deploy --prod --yes`.
+
+6. **`1d3c5c5`** — `fix(buddy): collapse nested borders on detail-page inner panels`. John spotted matryoshka effect: outer FocusCard `border-white/10 bg-black/30` + AgentTestSummaryPanel inner `border-white/15 bg-black/40` + PastHumanTestResultsPanel inner `border-white/10 bg-black/30` (identical to outer, made it break out as a sibling). Each inner panel's outer wrapper changed to `mt-5 border-t border-white/10 pt-5` — top divider + spacing instead of own box. The verdict callout (emerald/amber/sky bordered) stays — that's intentional semantic emphasis, not generic panel chrome. Same fix applied to FindingsPanel's outer wrapper.
+
+7. **`195a8eb`** — `fix(buddy): drop per-result borders in Past Test Results panel`. John spotted the same nesting one level deeper: each individual result item still had `rounded-xl border ${tone.border}`. Dropped to just `rounded-xl ${tone.bg}` — verdict-tinted background + the colored chip at top provide enough semantic distinction without a full bordered box.
+
+### Visual verification done (Chrome MCP, this Windows box)
+
+Desktop @ 1354px:
+- ✅ `/queue` renders queue with banner + filter chips + 3 grouped sections
+- ✅ Detail Step 1: ticket header + step tabs + AgentTestSummaryPanel inline, no nested borders, surface chips with correct icons (✓/—/⏱/✗) per `classifySurfaceResult`, legend below
+- ✅ Detail Step 2: AI summary collapsed to a chip with build number ("AI summary · 8 steps · build 65")
+- ✅ Detail Step 3: same chip-collapse pattern
+- ✅ Detail Step 4: FindingsPanel renders inline in focus card, Past Test Results below with INCONCLUSIVE chip from earlier E2E test
+- ✅ Queue → click card → detail page navigation works
+- ✅ QueueBreadcrumb shows "23 ready · BDEV-416 next" position
+
+Mobile @ 390px:
+- ✅ Queue header stacks; filter chips horizontal-scroll
+- ✅ Detail step tabs wrap to 2×2 grid
+- ✅ Detail focus card stretches full-width with 16px gutters
+- ✅ AI summary chip-collapse works on mobile
+
+Mobile @ 390px NOT visually verified (CSS path verified in code only):
+- ⚠️ Step 4 sticky bottom action bar — only renders when a live verdict card is showing AND viewport `<md`. BDEV-352 is now Done so we can't trigger a fresh verdict without polluting a closed ticket. The CSS class (`fixed bottom-0 left-0 right-0 ... safe-area-inset-bottom`) is wired correctly per the agent's report; will activate on the next real Submit findings → Sonnet verdict on an open ticket.
+
+### Worktrees cleaned up
+
+Both `heyblip-au-fork-queue` and `heyblip-au-fork-detail` removed via
+`git worktree remove --force`. Both `feat/queue-page-build` and
+`feat/detail-redesign-build` branches deleted. Only the main worktree
+at `heyblip-au-fork-clone` remains on `improvements/test-buddy-clarity-and-coach-tighten`
+at `195a8eb`.
+
+### Active ticket state churn during the session
+
+John was actively closing tickets in Jira during the verification
+phase. The queue dropped from 50 → 42 → 23 over the course of the
+afternoon. BDEV-352 (the canonical test ticket for the Findings flow)
+was closed to `Done`. This is fine — it just means future verification
+of Step 4 sticky bar needs a fresh Verifying-status ticket with no
+prior Human Test Result on it.
 
 ## Hard rules John has drilled (these are load-bearing)
 
@@ -350,13 +329,63 @@ They have **zero file overlap** by design — they will not conflict.
 
 ## Open work / known issues / next likely asks
 
-### Immediate (queue + detail rebuild lands)
+### Vision John surfaced end-of-session: "Buddy as a command centre"
 
-- Both build agents are still running. When they return:
-  1. Merge per the workflow above
-  2. Deploy
-  3. Visually verify
-  4. Tell John
+John's framing at the end of the session: *"this dashboard can be a
+bit of a command centre for the project"* — i.e., extend Buddy from a
+testing-only dashboard into a broader project-management hub. The
+existing Findings → Sonnet verdict → Jira write architecture is the
+template — same shape applies to many more operations. Plumbing is in
+place; future features are mostly UI + a new API route per action.
+
+### Next planned ship — "Generate AI Summary" button
+
+The headline ask John surfaced: *"how do I get AI Summaries into the
+tickets that don't have them?"* — currently done by manually spawning
+batch agents (66 tickets in one go this session). Plan for an in-Buddy
+button that does it on-demand, ticket-by-ticket.
+
+- **Where the button lives**:
+  - Detail page: when a Verifying ticket lacks an Agent Test Update,
+    the current fallback message gets a `[Generate AI Summary]` button.
+  - Queue page: cards with the muted "No AI summary yet" pill get a
+    small ✨ "Generate" affordance.
+- **API route**: new `/api/mvp-ticket-checklist/generate-summary/route.ts`,
+  mirrors the Findings/Verdict route shape — Jira fetch (description +
+  linked PR diff if available) → Sonnet 4.6 → Jira write of an Agent
+  Test Update in the exact parser format → return success.
+- **AI prompt design**: same conservatism dial as the Findings verdict
+  — ground in the ticket description + any linked PR; use "Not run" /
+  "N/A" liberally for surfaces we can't verify; plain English for the
+  Human test requested numbered list.
+- **Estimate**: ~250-350 LOC, 1 build agent, ~2-3 hours wall-clock.
+- **Cost per generation**: ~$0.02 in Sonnet tokens, ~10s.
+
+Once this lands manually, a cron variant (auto-fill the backlog) is a
+~50 LOC follow-up. Same pattern.
+
+### Backlog gap — "Not yet picked up" section
+
+Discovered during end-of-session walk-through: the queue's JQL is
+`project = BDEV AND status in ("In Progress", "Verifying", "Selected")`
+— so **tickets in `To Do` status don't surface in the queue**.
+Confirmed multiple `To Do` tickets sitting unloved: BDEV-496, 495,
+494, 492, 481, and more. The mockup didn't include this because the
+queue was designed strictly for "testable" work, but John said "more
+than 23 tickets are open" — he was counting the To Do backlog.
+
+Two options when ready to add:
+
+1. **Loosen the queue JQL** to also include `To Do`, add a 4th grouped
+   section "Not yet picked up" between the existing "In progress" and
+   "Waiting to start". Tiny change: ~20 LOC in `QueueClient.tsx` +
+   `buildQueueJql()`.
+2. **Leave it filtered** and accept that Buddy is testing-focused —
+   John can always go to Jira for the full backlog.
+
+Recommendation: ship option 1. The user explicitly asked for visibility.
+
+### Pending housekeeping (low priority but worth ticking off)
 
 ### Pending housekeeping (low priority but worth ticking off)
 
@@ -543,7 +572,7 @@ session:
   state. `git worktree add ../<name> -b feat/<name>`, do the work,
   `git worktree remove --force` at the end.
 
-## Final state checklist for the next PM
+## Final state checklist (end of session 2026-05-13)
 
 - [x] 66 Agent Test Update comments posted to Verifying tickets
 - [x] Findings + AI verdict + close-or-reopen feature live
@@ -551,16 +580,26 @@ session:
 - [x] Mark Done success banner + step-button clarity + always-on
       Mark-done-anyway live
 - [x] Surface chip 4-state classifier live
-- [x] End-to-end Chrome walkthrough on BDEV-352 verified everything
 - [x] PR #2 merged on fork; main now reflects production
-- [ ] (in flight) `/queue` page build agent — branch
-      `feat/queue-page-build`
-- [ ] (in flight) detail page rebuild agent — branch
-      `feat/detail-redesign-build`
-- [ ] (open) merge both branches when agents return + deploy + verify
+- [x] `/queue` page built + merged + deployed (commit `2a18af2`,
+      merged into main as `6017177`)
+- [x] Detail page rebuild built + merged + deployed (commit `57feb37`,
+      merged into main as `6017177`; `MvpTicketChecklistClient.tsx`
+      shrunk 3020 → 1522 LOC)
+- [x] Two end-of-session nesting fixes deployed (`1d3c5c5` outer
+      panels, `195a8eb` per-result items)
+- [x] Worktrees removed, feature branches deleted
+- [x] End-to-end Chrome verification on desktop + mobile
+- [ ] (next ship) **"Generate AI Summary" button** — on-demand AI
+      Summary generation for tickets that lack one. ~2-3 hours, single
+      build agent.
+- [ ] (small follow-up after #1) Loosen queue JQL to include `To Do`
+      status, add "Not yet picked up" 4th section. ~20 LOC.
 - [ ] (open) rotate the Vercel token used this session
-- [ ] (open) delete BDEV-352 E2E test comment
-- [ ] (open) add upstream Jira automation rule for status drift
+      (`vcp_2wdlx11BFSHm…`)
+- [ ] (open) delete BDEV-352 E2E test comment (cosmetic)
+- [ ] (open) add upstream Jira automation rule for BDEV-493-style
+      status drift (PR opened → To Do → In Progress)
 - [ ] (open from 2026-05-08) `GITHUB_TOKEN` → fine-grained PAT
 - [ ] (open from 2026-05-08) `dSYM` warning on Sentry.framework
 - [ ] (open from 2026-05-08) ASC API for true TestFlight-ready signal
@@ -569,6 +608,7 @@ session:
 
 That's it. Read `docs/buddy-pm-handover-2026-05-08.md` for older
 context, then `docs/blip-test-buddy-agent-handoff.md` for product
-spec. After that, check the two in-flight agents (`af634aafbe32340b0`
-queue, `aab861bee765b30b2` detail) and continue from where this
-session ended.
+spec. The session ended with John framing Buddy as a future "command
+centre for the project" — the natural next ships are the Generate AI
+Summary button + the To Do backlog section, both grounded in the same
+plumbing already in place.
