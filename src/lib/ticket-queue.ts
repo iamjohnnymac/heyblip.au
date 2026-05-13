@@ -195,16 +195,18 @@ function scanComments(value: unknown): {
   let hasAgentTestUpdate = false;
   let hasHumanTestResult = false;
   let agentTestUpdateStatus: "passed" | "failed" | "inconclusive" | "unknown" = "unknown";
+  // Walk every comment (Jira returns them oldest-first) and let each Agent
+  // Test Update overwrite the prior — the *most recent* ATU is the
+  // authoritative one. Without this, a stale "inconclusive" backfill on a
+  // ticket whose latest ATU says "passed" stays inconclusive in the queue,
+  // and the Ready-bucket promotion never fires.
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
     const text = commentBodyToText(record.body);
     if (!text) continue;
-    if (!hasAgentTestUpdate && /agent test update/i.test(text)) {
+    if (/agent test update/i.test(text)) {
       hasAgentTestUpdate = true;
-      // Parse the `Agent testing:` labelled value from the same comment so
-      // the queue can promote `passed` tickets into the Ready bucket even if
-      // their Jira status didn't auto-transition.
       const match = text.match(/agent testing:\s*(passed|failed|inconclusive)/i);
       if (match) {
         const value = match[1].toLowerCase();
@@ -213,8 +215,7 @@ function scanComments(value: unknown): {
         }
       }
     }
-    if (!hasHumanTestResult && /human test result/i.test(text)) hasHumanTestResult = true;
-    if (hasAgentTestUpdate && hasHumanTestResult) break;
+    if (/human test result/i.test(text)) hasHumanTestResult = true;
   }
   return { hasAgentTestUpdate, hasHumanTestResult, agentTestUpdateStatus };
 }
