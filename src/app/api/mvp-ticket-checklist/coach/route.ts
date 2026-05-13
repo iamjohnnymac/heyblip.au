@@ -88,6 +88,19 @@ type CoachInput = {
     outOfScope: string[];
   };
   issueExcerpt: string;
+  // Most recent human verification attempt, when one exists. Lets the
+  // coach answer "why didn't my test pass?" with context, not generic
+  // step explanations. When outcome is fail or inconclusive, the coach
+  // is told to lead with what to do differently next time.
+  latestHumanTestResult?: {
+    outcome: string;
+    verifier: string;
+    when: string;
+    buildOrCommit: string;
+    findings: string;
+    aiReasoning: string;
+    aiNextStep: string;
+  };
 };
 
 function needsAccessGate(): boolean {
@@ -214,6 +227,17 @@ function buildCoachInput(data: ChecklistViewModel, fallback: CoachResponse, curr
       outOfScope: data.workRecipe.outOfScope.map((item) => truncateExcerpt(item, 100)),
     },
     issueExcerpt: truncateExcerpt(`${data.summary}\n${data.descriptionText}`, 700),
+    latestHumanTestResult: data.humanTestResults[0]
+      ? {
+          outcome: data.humanTestResults[0].outcome,
+          verifier: truncateExcerpt(data.humanTestResults[0].verifier || "", 100),
+          when: data.humanTestResults[0].created || "",
+          buildOrCommit: truncateExcerpt(data.humanTestResults[0].buildOrCommit || "", 120),
+          findings: truncateExcerpt(data.humanTestResults[0].findings || "", 600),
+          aiReasoning: truncateExcerpt(data.humanTestResults[0].aiReasoning || "", 500),
+          aiNextStep: truncateExcerpt(data.humanTestResults[0].aiNextStep || "", 200),
+        }
+      : undefined,
   };
 }
 
@@ -240,6 +264,13 @@ function buildCoachInstructions(): string {
     "- Keep it short: nextMove is one sentence. Max 4 John/Tay steps, each under 18 words.",
     "- Sentences start with a verb in the imperative when telling the user what to do.",
     "- Do not invent facts. Use only the data provided.",
+    "",
+    "FAILURE CONTEXT (latestHumanTestResult).",
+    "- If `latestHumanTestResult` is present with outcome 'fail' or 'inconclusive', the user JUST tried this and it didn't pass. Do NOT give generic step explanations.",
+    "- Lead `nextMove` with what to change for the next attempt: a different test setup, missing precondition, evidence to capture, or 'send back to the AI to fix' — whatever the verdict + reasoning point at.",
+    "- Quote the specific concern the AI flagged. Don't paraphrase vaguely. If the verdict says the test sequence was disrupted, say which step was disrupted and how to fix it.",
+    "- If the outcome is 'pass', acknowledge it briefly and move on to whatever's next (Mark Done, file the next bug, etc.). Don't restate the test plan.",
+    "- If `latestHumanTestResult` is absent, the user hasn't tried yet — explain the current step normally.",
     "",
     "JSON format.",
     "- Return valid JSON only. Do not wrap it in markdown.",

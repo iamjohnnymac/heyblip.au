@@ -2453,6 +2453,31 @@ function buildCodingAgentPrompt(
     (template) => template.id === "agent-test-update",
   )?.body;
 
+  // Most recent human-verification attempt, if any. Surfaces the verdict
+  // + reasoning + concerns inline so a re-dispatched agent reads the
+  // human failure context without having to navigate to Jira.
+  const humanTestResults = extractHumanTestResults(input.comments);
+  const latestResult = humanTestResults[0];
+  const priorVerification = latestResult
+    ? [
+        "",
+        "Latest human verification (read this before coding):",
+        `- Outcome: ${latestResult.outcome}`,
+        `- Verifier: ${latestResult.verifier || "(unknown)"}`,
+        latestResult.created ? `- When: ${latestResult.created}` : "",
+        latestResult.buildOrCommit ? `- Tested on: ${latestResult.buildOrCommit}` : "",
+        latestResult.findings ? `- What the human saw:\n${indentBlock(latestResult.findings, "  ")}` : "",
+        latestResult.evidence ? `- Evidence:\n${indentBlock(latestResult.evidence, "  ")}` : "",
+        latestResult.aiRecommendation ? `- AI recommendation: ${latestResult.aiRecommendation}` : "",
+        latestResult.aiReasoning ? `- AI reasoning: ${latestResult.aiReasoning}` : "",
+        latestResult.aiNextStep ? `- AI suggested next step: ${latestResult.aiNextStep}` : "",
+        "",
+        "- If the outcome is 'fail' or 'inconclusive', the prior fix DID NOT pass human verification. Read the reasoning, address the specific concerns, and either patch the code OR rewrite the human test instructions if the test as written was impossible to run.",
+        "- If the outcome is 'inconclusive' due to disrupted test conditions, prioritise fixing the test setup (clearer steps, pre-conditions) over more code changes.",
+        humanTestResults.length > 1 ? `- ${humanTestResults.length} prior verification attempts total — read them all on the Jira ticket if patterns matter.` : "",
+      ].filter(Boolean)
+    : [];
+
   return [
     `Pick up ${input.issueKey}: ${input.summary}`,
     "",
@@ -2549,6 +2574,7 @@ function buildCodingAgentPrompt(
     "",
     "Current Jira description / acceptance excerpt:",
     descriptionExcerpt,
+    ...priorVerification,
     "",
     "Linked Jira context:",
     linkedIssues.length ? linkedIssues.map((issue) => `- ${issue}`).join("\n") : "- No linked issues returned.",
@@ -2976,6 +3002,14 @@ function fieldToText(value: unknown): string {
   }
 
   return "";
+}
+
+function indentBlock(value: string, indent: string): string {
+  if (!value) return "";
+  return value
+    .split(/\r?\n/)
+    .map((line) => (line.length ? `${indent}${line}` : line))
+    .join("\n");
 }
 
 function compactText(value: string): string {

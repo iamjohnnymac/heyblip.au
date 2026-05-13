@@ -18,6 +18,7 @@ import {
   type FindingsVerdict,
   type FindingsVerdictInput,
 } from "@/lib/findings-verdict";
+import { fetchSentryIssueSnapshots } from "@/lib/sentry-events";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -149,7 +150,35 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     return NextResponse.json({ ...cachedBody, cached: true });
   }
 
-  const sentryIds = extractSentryIdsLoose(evidence);
+  // Sentry IDs come from two places: anything the user pasted into
+  // evidence, plus the Sentry-watch IDs the AI's plan already flagged.
+  // The union goes to Sonnet so the grading sees both what the human
+  // captured and what the AI said to watch for.
+  const sentryIdsFromUser = extractSentryIdsLoose(evidence);
+  const sentryIdsFromPlan = data.humanTestPlan.agentUpdate.sentryWatchIds || [];
+  const sentryIds = Array.from(new Set([...sentryIdsFromUser, ...sentryIdsFromPlan]));
+
+  // Live Sentry snapshot — only when env is configured. We inject it
+  // into the evidence text Sonnet sees BEFORE building the verdict input
+  // so it's part of the same payload, not a sidecar field. When Sentry
+  // isn't configured (or the fetch fails) we silently fall back to the
+  // text-only evidence.
+  let augmentedEvidence = evidence;
+  let sentrySnapshotLines = "";
+  if (sentryIds.length > 0) {
+    const snapshot = await fetchSentryIssueSnapshots(sentryIds);
+    if (snapshot.status === "ready" && snapshot.issues.length > 0) {
+      sentrySnapshotLines = [
+        "Live Sentry status (fetched at verdict time):",
+        ...snapshot.issues.map((issue) => `- ${issue.evidenceLine}`),
+        ...(snapshot.misses.length
+          ? [`- (missed: ${snapshot.misses.join("; ")})`]
+          : []),
+      ].join("\n");
+      augmentedEvidence = [augmentedEvidence, sentrySnapshotLines].filter(Boolean).join("\n\n");
+    }
+  }
+
   const surfacePassFail = normaliseSurfacePassFail(payload.surfacePassFail);
   const verdictInput: FindingsVerdictInput = {
     issueKey,
@@ -158,7 +187,7 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     agentTestUpdate: summariseAgentTestUpdate(data.humanTestPlan.agentUpdate),
     buildOrCommit,
     findings,
-    evidence,
+    evidence: augmentedEvidence,
     surfacePassFail,
     sentryIds,
   };
@@ -198,7 +227,10 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     outcome: verdict.verdict,
     verifier: verifierName,
     findings,
-    evidence,
+    // The Jira comment carries the same augmented evidence Sonnet saw
+    // so anyone reading the ticket later sees the same Sentry snapshot
+    // the AI based its verdict on.
+    evidence: augmentedEvidence,
     aiVerdict: verdict,
   });
 
