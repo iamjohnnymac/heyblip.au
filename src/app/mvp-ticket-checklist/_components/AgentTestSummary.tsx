@@ -132,7 +132,9 @@ export function AgentTestSummaryPanel({
                   <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/25 text-xs font-bold text-[var(--accent-light)]">
                     {item.number}
                   </span>
-                  <div className="min-w-0 flex-1 text-sm leading-6 text-white">
+                  <div
+                    className="min-w-0 flex-1 break-words text-sm leading-6 text-white [overflow-wrap:anywhere]"
+                  >
                     {item.title ? (
                       <span className="font-semibold text-white">{item.title}</span>
                     ) : null}
