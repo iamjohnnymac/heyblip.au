@@ -72,6 +72,12 @@ function isReady(row: QueueRowView): boolean {
   const status = row.status.toLowerCase();
   const review = row.humanFinalReview.toLowerCase();
   const stage = row.loopStage.toLowerCase();
+  // Hard bail: if the human has already verified this and the verdict
+  // was fail/inconclusive (recorded as HFR = Failed by the findings
+  // route), the ticket is NOT Ready any more even when status is still
+  // Verifying. The user can still tap Mark Done as an override; but
+  // until they do, the bucket reflects the failed verification.
+  if (review === "failed") return false;
   if (status === "verifying") return true;
   if (review === "ready") return true;
   if (/verifying|in build|ci green/i.test(stage)) return true;
@@ -86,7 +92,13 @@ function isReady(row: QueueRowView): boolean {
 
 function isInProgress(row: QueueRowView): boolean {
   if (isReady(row)) return false;
-  return row.status.toLowerCase() === "in progress";
+  const status = row.status.toLowerCase();
+  const review = row.humanFinalReview.toLowerCase();
+  // Catches the "verified but failed" state: status stayed Verifying
+  // because the user hasn't tapped Reopen yet, but HFR=Failed already
+  // dropped them out of Ready above. Without this branch they'd
+  // disappear from every bucket.
+  return status === "in progress" || (status === "verifying" && review === "failed");
 }
 
 function isWaiting(row: QueueRowView): boolean {

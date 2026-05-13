@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  editJiraIssueFields,
   getJiraTicketChecklist,
   normalizeIssueKey,
   postJiraComment,
@@ -253,6 +254,49 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     return NextResponse.json({ status: "error", message }, { status: 502 });
   }
 
+  // When the verdict is fail or inconclusive, immediately reflect that
+  // in Jira state so the queue / detail page don't keep showing the
+  // ticket as Ready for you. The user can still click Mark Done /
+  // Reopen / Need more info — but the fields are honest in the meantime.
+  // All writes are best-effort: a failure here logs and continues, since
+  // the verdict + Human Test Result comment have already landed.
+  if (verdict.verdict === "fail" || verdict.verdict === "inconclusive") {
+    try {
+      await editJiraIssueFields(jiraConfig, issueKey, {
+        customfield_10046: { value: "Failed" }, // Human Final Review
+      });
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[findings route] HFR=Failed write failed for ${issueKey}:`,
+          error instanceof Error ? error.message : "unknown error",
+        );
+      }
+    }
+
+    // Override the prior "Agent testing: passed" so scanComments's
+    // most-recent-ATU-wins rule flips agentTestUpdateStatus accordingly.
+    // We label it as fail/inconclusive to match the Sonnet verdict —
+    // this isn't the AI saying its code broke, it's the human-verified
+    // outcome being recorded against the AI's "passed" claim.
+    try {
+      const override = buildHumanVerdictAtuOverride({
+        verdict: verdict.verdict,
+        buildOrCommit,
+        reasoning: verdict.reasoning,
+        findingsCommentId: postedCommentId,
+      });
+      await postJiraComment(jiraConfig, issueKey, override);
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[findings route] ATU override post failed for ${issueKey}:`,
+          error instanceof Error ? error.message : "unknown error",
+        );
+      }
+    }
+  }
+
   const body: Extract<FindingsResponse, { status: "ready" }> = {
     status: "ready",
     verdict,
@@ -391,6 +435,39 @@ async function fetchAttachmentImagesForVerdict(
     if (result.status === "fulfilled" && result.value) fetched.push(result.value);
   }
   return fetched;
+}
+
+// Posted when the Sonnet verdict comes back fail/inconclusive. Same
+// shape as the transition-route reopen override, but tied to the
+// findings-submit step (no status transition has happened yet — the
+// user might still pick Need more info or Mark Done). scanComments
+// picks this up as the most-recent ATU so agentTestUpdateStatus flips
+// off "passed".
+function buildHumanVerdictAtuOverride(input: {
+  verdict: "fail" | "inconclusive";
+  buildOrCommit: string;
+  reasoning: string;
+  findingsCommentId: string;
+}): string {
+  const lines = [
+    `Agent Test Update — Human verification ${input.verdict}`,
+    "",
+    `Agent testing: ${input.verdict === "fail" ? "failed" : "inconclusive"}`,
+    input.buildOrCommit ? `Build/commit: ${input.buildOrCommit}` : "",
+    "Human verification needed: yes",
+    "",
+    "Reason (from AI verdict on human findings):",
+    input.reasoning || "(no reasoning recorded — see the Human Test Result comment above)",
+    "",
+    "Status reset by Buddy:",
+    "- Human Final Review: Failed",
+    `- Agent testing classification: ${input.verdict === "fail" ? "failed" : "inconclusive"} (overrides any earlier "passed" claim)`,
+    "",
+    input.findingsCommentId
+      ? `Findings comment id: ${input.findingsCommentId}`
+      : "See the Human Test Result comment above for the full findings + AI verdict.",
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function summariseAgentTestUpdate(agentUpdate: AgentTestUpdateViewModel): string {
