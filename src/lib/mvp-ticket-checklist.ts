@@ -455,6 +455,23 @@ export type HumanTestRequestedSegment = {
   value: string;
 };
 
+// A single Human Test Result comment, posted by Buddy after a human runs
+// the test and gets an AI verdict. Mirrors the Agent Test Update parser
+// convention so the active step card can render past results inline.
+export type HumanTestResultViewModel = {
+  commentId: string;
+  author: string;
+  created: string;
+  buildOrCommit: string;
+  outcome: "pass" | "fail" | "inconclusive" | "unknown";
+  verifier: string;
+  findings: string;
+  evidence: string;
+  aiRecommendation: string;
+  aiReasoning: string;
+  aiNextStep: string;
+};
+
 export type AgentTestUpdateViewModel = {
   found: boolean;
   status: "passed" | "failed" | "not-run" | "unknown";
@@ -535,6 +552,10 @@ export type ChecklistViewModel = ChecklistInput & {
   workRecipe: WorkRecipeViewModel;
   proofRecipe: ProofRecipeViewModel;
   humanTestPlan: HumanTestPlanViewModel;
+  // Past "Human Test Result" comments Buddy has posted on this ticket,
+  // newest first. The active step card surfaces the latest result inline
+  // so the human (and any future verifier) doesn't have to hop to Jira.
+  humanTestResults: HumanTestResultViewModel[];
   recommendedAction: RecommendedAction;
   checklistSections: ChecklistSection[];
   commentTemplates: CommentTemplate[];
@@ -892,6 +913,7 @@ export function buildChecklistViewModel(input: ChecklistInput): ChecklistViewMod
     workRecipe,
     proofRecipe,
     humanTestPlan,
+    humanTestResults: extractHumanTestResults(input.comments),
     recommendedAction: getRecommendedAction({
       issueKey: input.issueKey,
       summary: input.summary,
@@ -1929,6 +1951,69 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   };
 }
 
+// Parses every "Human Test Result" comment Buddy has posted to the
+// ticket. Mirrors extractAgentTestUpdate so the active step card can
+// render past results inline. Returned newest-first (latest is index 0).
+export function extractHumanTestResults(comments: JiraComment[]): HumanTestResultViewModel[] {
+  return comments
+    .filter((comment) => /human test result/i.test(comment.text))
+    .map((comment) => {
+      const outcomeRaw = readLabeledValue(comment.text, "Outcome").toLowerCase();
+      const outcome: HumanTestResultViewModel["outcome"] =
+        /\bpass(ed)?\b/.test(outcomeRaw)
+          ? "pass"
+          : /\bfail(ed)?\b/.test(outcomeRaw)
+            ? "fail"
+            : /\binconclusive|unknown|needs? more info\b/.test(outcomeRaw)
+              ? "inconclusive"
+              : "unknown";
+
+      // The build is written as "Tested on: build 65" or similar.
+      const testedOn = readLabeledValue(comment.text, "Tested on");
+      const buildOrCommit = testedOn || readLabeledValue(comment.text, "Build/commit");
+      const verifier = readLabeledValue(comment.text, "Verifier") || comment.author;
+      const findings = readBlockLines(comment.text, "Findings", [
+        "Evidence",
+        "AI verdict",
+        "AI verdict (auto-generated)",
+        "Recommendation",
+      ])
+        .join("\n")
+        .trim();
+      const evidence = readBlockLines(comment.text, "Evidence", [
+        "AI verdict",
+        "AI verdict (auto-generated)",
+        "Recommendation",
+      ])
+        .join("\n")
+        .trim();
+      const aiRecommendation = readLabeledValue(comment.text, "Recommendation");
+      const aiReasoning = readLabeledValue(comment.text, "Reasoning");
+      const aiNextStep = readLabeledValue(comment.text, "Next step");
+
+      return {
+        commentId: comment.id,
+        author: comment.author,
+        created: comment.created,
+        buildOrCommit,
+        outcome,
+        verifier,
+        findings,
+        evidence,
+        aiRecommendation,
+        aiReasoning,
+        aiNextStep,
+      };
+    })
+    .sort((a, b) => {
+      // Newest first. Falls back to commentId order when timestamps tie.
+      const aTime = Date.parse(a.created || "") || 0;
+      const bTime = Date.parse(b.created || "") || 0;
+      if (bTime !== aTime) return bTime - aTime;
+      return (b.commentId || "").localeCompare(a.commentId || "");
+    });
+}
+
 // Splits the "Human test requested" block into structured items so the
 // inline panel can render them as a numbered list. Each item gets a
 // short title (first emphasised phrase or the whole line up to em-dash)
@@ -2553,6 +2638,160 @@ export async function jiraFetch<T>(
   }
 
   return (await response.json()) as T;
+}
+
+// POST helper for the Jira REST API. Same auth pattern as jiraFetch but
+// for write actions like adding a comment or transitioning a ticket.
+// Returns the parsed JSON body, or `null` for 204 No Content responses
+// (Jira transitions return 204 on success).
+export async function jiraPost<T>(
+  config: { baseUrl: string; email: string; token: string },
+  path: string,
+  body: unknown,
+): Promise<T | null> {
+  const response = await fetch(`${config.baseUrl}${path}`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Basic ${Buffer.from(`${config.email}:${config.token}`).toString("base64")}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const status = `${response.status} ${response.statusText}`.trim();
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch {
+      detail = "";
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Jira returned ${status}. Check Jira credentials and ticket permissions. ${detail.slice(0, 200)}`.trim());
+    }
+    throw new Error(`Jira returned ${status || "an error"} on POST. ${detail.slice(0, 200)}`.trim());
+  }
+
+  if (response.status === 204) return null;
+  // Some Jira POSTs (e.g. /comment) return 201 with a JSON body.
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+// Posts a plain-text comment to a Jira issue via the v3 REST API. The
+// body must be ADF — we wrap the text in a single paragraph with hard
+// breaks for newlines so the formatting renders. Returns the created
+// comment id, or "" if Jira didn't return one.
+export async function postJiraComment(
+  config: { baseUrl: string; email: string; token: string },
+  issueKey: string,
+  text: string,
+): Promise<string> {
+  const adfBody = textToAdf(text);
+  const result = await jiraPost<{ id?: string }>(
+    config,
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
+    { body: adfBody },
+  );
+  return typeof result?.id === "string" ? result.id : "";
+}
+
+// Transitions a Jira issue and (optionally) leaves a comment in the same
+// payload — Jira lets you bundle a comment with a transition.
+export async function transitionJiraIssue(
+  config: { baseUrl: string; email: string; token: string },
+  issueKey: string,
+  transitionId: string,
+  comment?: string,
+): Promise<void> {
+  const payload: Record<string, unknown> = {
+    transition: { id: transitionId },
+  };
+  if (comment) {
+    payload.update = {
+      comment: [{ add: { body: textToAdf(comment) } }],
+    };
+  }
+  await jiraPost(
+    config,
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+    payload,
+  );
+}
+
+// Converts plain text into a minimal ADF (Atlassian Document Format)
+// document. Each \n becomes a hardBreak inside a single paragraph.
+// Code-fenced blocks (```...```) become ADF codeBlock nodes so the
+// posted comment renders evidence/logs with monospace formatting.
+function textToAdf(text: string): Record<string, unknown> {
+  const lines = (text || "").split(/\r?\n/);
+  const content: Array<Record<string, unknown>> = [];
+  let i = 0;
+  let buffer: string[] = [];
+
+  function flushParagraph() {
+    if (!buffer.length) return;
+    // Skip a paragraph that's just empty lines.
+    const meaningful = buffer.some((line) => line.trim().length > 0);
+    if (!meaningful) {
+      buffer = [];
+      return;
+    }
+    const paragraphContent: Array<Record<string, unknown>> = [];
+    buffer.forEach((line, idx) => {
+      if (idx > 0) paragraphContent.push({ type: "hardBreak" });
+      if (line) paragraphContent.push({ type: "text", text: line });
+    });
+    content.push({ type: "paragraph", content: paragraphContent });
+    buffer = [];
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      flushParagraph();
+      i += 1;
+      const codeLines: string[] = [];
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      // Skip the closing fence.
+      if (i < lines.length) i += 1;
+      const codeText = codeLines.join("\n");
+      if (codeText) {
+        content.push({
+          type: "codeBlock",
+          content: [{ type: "text", text: codeText }],
+        });
+      }
+      continue;
+    }
+    // Treat a blank line as a paragraph break.
+    if (line.trim() === "") {
+      flushParagraph();
+      i += 1;
+      continue;
+    }
+    buffer.push(line);
+    i += 1;
+  }
+  flushParagraph();
+
+  return {
+    type: "doc",
+    version: 1,
+    content: content.length
+      ? content
+      : [{ type: "paragraph", content: [{ type: "text", text: text || "" }] }],
+  };
 }
 
 function toComment(value: unknown): JiraComment | null {

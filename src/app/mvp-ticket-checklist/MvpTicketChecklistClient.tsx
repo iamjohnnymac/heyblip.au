@@ -16,20 +16,26 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  HelpCircle,
   KeyRound,
   ListChecks,
   LockKeyhole,
+  Loader2,
+  MessageSquareText,
   MonitorSmartphone,
   MoreHorizontal,
   RefreshCcw,
   Search,
+  Send,
   ShieldCheck,
   Smartphone,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   TicketCheck,
   Users,
 } from "lucide-react";
-import type { ChecklistViewModel, JiraChecklistResult } from "@/lib/mvp-ticket-checklist";
+import type { ChecklistViewModel, HumanTestResultViewModel, JiraChecklistResult } from "@/lib/mvp-ticket-checklist";
 import { capitalizeFirst, descriptionExcerpt, findManualBugStep, shortTestInstruction } from "@/lib/checklist-helpers";
 
 type AccessState = {
@@ -96,7 +102,43 @@ type BuildStatusState =
   | { kind: "idle" }
   | { kind: "ready"; body: BuildStatusBody };
 
+type FindingsVerdict = {
+  verdict: "pass" | "fail" | "inconclusive";
+  reasoning: string;
+  next_step: string;
+  evidence_supports_fix: boolean | null;
+  concerns: string[];
+};
+
+type FindingsBody =
+  | {
+      status: "ready";
+      verdict: FindingsVerdict;
+      postedCommentId: string;
+      buildOrCommit: string;
+      transitions: {
+        markDone: { transitionId: string };
+        reopen: { transitionId: string };
+      };
+      cached: boolean;
+      source: "openrouter" | "local-fallback";
+    }
+  | { status: "error"; message: string };
+
+type FindingsState =
+  | { kind: "idle" }
+  | { kind: "submitting" }
+  | { kind: "ready"; body: Extract<FindingsBody, { status: "ready" }> }
+  | { kind: "error"; message: string };
+
+type TransitionState =
+  | { kind: "idle" }
+  | { kind: "submitting"; action: "mark-done" | "reopen" }
+  | { kind: "done"; action: "mark-done" | "reopen" }
+  | { kind: "error"; message: string };
+
 const COACH_REQUEST_TIMEOUT_MS = 100000;
+const FINDINGS_REQUEST_TIMEOUT_MS = 30_000;
 const BUILD_STATUS_POLL_MS = 30_000;
 
 const loopStages = [
@@ -864,6 +906,425 @@ function AgentTestSummaryPanel({
   );
 }
 
+// "Write your findings" panel — the new Step 4 input that turns human
+// testing into a Jira comment + AI verdict + 3-action card. Lives below
+// the existing pass/fail boxes on Step 4. Renders one of:
+//   - the empty form (default)
+//   - a loading state (~10s while Claude judges)
+//   - the verdict card with 3 buttons (Mark Done / Reopen / Need more info)
+//   - an error state with a retry option
+function FindingsPanel({
+  findingsText,
+  setFindingsText,
+  evidenceText,
+  setEvidenceText,
+  state,
+  transitionState,
+  onSubmit,
+  onMarkDone,
+  onReopen,
+  onNeedMoreInfo,
+  onDismissError,
+}: {
+  findingsText: string;
+  setFindingsText: (value: string) => void;
+  evidenceText: string;
+  setEvidenceText: (value: string) => void;
+  state: FindingsState;
+  transitionState: TransitionState;
+  onSubmit: () => void;
+  onMarkDone: () => void;
+  onReopen: () => void;
+  onNeedMoreInfo: () => void;
+  onDismissError: () => void;
+}) {
+  const canSubmit = findingsText.trim().length > 0 && state.kind !== "submitting";
+  const submitting = state.kind === "submitting";
+  const ready = state.kind === "ready";
+  const verdict = ready ? state.body.verdict : null;
+  const buildOrCommit = ready ? state.body.buildOrCommit : "";
+
+  return (
+    <div className="mt-5 rounded-2xl border border-white/15 bg-black/40 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--accent-light)]">
+        <MessageSquareText size={13} />
+        Write your findings
+      </div>
+      <p className="mt-2 text-sm leading-6 text-[var(--muted-strong)]">
+        Tell Buddy what happened on your phone. Buddy posts it to Jira and asks the AI
+        whether this looks done.
+      </p>
+
+      <div className="mt-4 grid gap-3">
+        <label className="block">
+          <span className="text-sm font-semibold text-white">What happened when you tested?</span>
+          <textarea
+            value={findingsText}
+            onChange={(event) => setFindingsText(event.target.value)}
+            placeholder="e.g. I backgrounded the app for 2 minutes, brought it back, and only one reconnect line appeared in the log."
+            rows={3}
+            disabled={submitting}
+            className="mt-1.5 block w-full resize-y rounded-xl border border-white/15 bg-black/30 px-3 py-2.5 text-sm leading-6 text-white placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 disabled:opacity-60"
+            style={{ minHeight: 72 }}
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-semibold text-white">
+            Paste any logs, Sentry IDs, or evidence{" "}
+            <span className="font-normal text-[var(--muted)]">(optional)</span>
+          </span>
+          <textarea
+            value={evidenceText}
+            onChange={(event) => setEvidenceText(event.target.value)}
+            placeholder="Drag-and-drop or paste — Sentry IDs like APPLE-IOS-XX, debug log lines, anything."
+            rows={5}
+            disabled={submitting}
+            className="mt-1.5 block w-full resize-y rounded-xl border border-white/15 bg-black/30 px-3 py-2.5 text-sm leading-6 text-white placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 disabled:opacity-60"
+            style={{ minHeight: 120, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}
+          />
+        </label>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={!canSubmit}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-emerald-300 px-5 text-sm font-bold text-black transition-colors hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitting ? (
+            <>
+              <Loader2 size={15} className="animate-spin" />
+              Sending to AI...
+            </>
+          ) : (
+            <>
+              <Send size={15} strokeWidth={2.5} />
+              Submit findings
+            </>
+          )}
+        </button>
+        {!canSubmit && !submitting ? (
+          <span className="text-xs text-[var(--muted)]">Write what you saw to enable submit.</span>
+        ) : null}
+      </div>
+
+      {state.kind === "error" ? (
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-red-300/45 bg-red-300/10 px-4 py-3 text-sm text-red-100">
+          <span className="flex items-start gap-2">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+            {state.message}
+          </span>
+          <button
+            type="button"
+            onClick={onDismissError}
+            className="inline-flex items-center gap-1 rounded-md border border-red-300/50 bg-red-300/10 px-2 py-1 text-xs font-semibold text-red-100 transition-colors hover:bg-red-300/20"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {ready && verdict ? (
+        <VerdictCard
+          verdict={verdict}
+          buildOrCommit={buildOrCommit}
+          source={state.body.source}
+          transitionState={transitionState}
+          onMarkDone={onMarkDone}
+          onReopen={onReopen}
+          onNeedMoreInfo={onNeedMoreInfo}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// The AI verdict card — slides in after submit. Shows the AI's call
+// (pass / fail / inconclusive), the plain-English reasoning, the
+// one-line next step, and the 3 action buttons. All 3 buttons are
+// always shown so the human can override the AI.
+function VerdictCard({
+  verdict,
+  buildOrCommit,
+  source,
+  transitionState,
+  onMarkDone,
+  onReopen,
+  onNeedMoreInfo,
+}: {
+  verdict: FindingsVerdict;
+  buildOrCommit: string;
+  source: "openrouter" | "local-fallback";
+  transitionState: TransitionState;
+  onMarkDone: () => void;
+  onReopen: () => void;
+  onNeedMoreInfo: () => void;
+}) {
+  const chip = verdictChipCopy(verdict.verdict);
+  const isSubmitting = transitionState.kind === "submitting";
+  const doneAction = transitionState.kind === "done" ? transitionState.action : null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className={`mt-5 rounded-2xl border p-4 sm:p-5 ${chip.cardClass}`}
+      role="region"
+      aria-live="polite"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${chip.chipClass}`}>
+          {chip.icon}
+          {chip.label}
+        </span>
+        {source === "local-fallback" ? (
+          <span className="rounded-full border border-white/15 bg-black/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+            Local fallback
+          </span>
+        ) : null}
+      </div>
+
+      <p className="mt-3 text-base leading-7 text-white">{verdict.reasoning}</p>
+      <p className="mt-2 text-sm leading-6 text-[var(--muted-strong)]">
+        <span className="font-semibold text-white">Next step:</span> {verdict.next_step}
+      </p>
+
+      {verdict.concerns.length > 0 ? (
+        <ul className="mt-3 grid list-none gap-1.5 pl-0 text-xs text-[var(--muted-strong)]">
+          {verdict.concerns.map((concern, idx) => (
+            <li key={idx} className="flex items-start gap-1.5">
+              <span className="mt-1 inline-flex h-1 w-1 shrink-0 rounded-full bg-[var(--muted)]" />
+              <span>{concern}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <button
+          type="button"
+          onClick={onMarkDone}
+          disabled={isSubmitting || doneAction === "mark-done"}
+          className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+            verdict.verdict === "pass"
+              ? "bg-emerald-300 text-black hover:bg-emerald-200"
+              : "border border-emerald-300/40 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+          }`}
+        >
+          {isSubmitting && transitionState.kind === "submitting" && transitionState.action === "mark-done" ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : doneAction === "mark-done" ? (
+            <Check size={15} strokeWidth={3} />
+          ) : (
+            <ThumbsUp size={15} />
+          )}
+          {doneAction === "mark-done" ? "Marked done" : "Mark Done"}
+        </button>
+        <button
+          type="button"
+          onClick={onReopen}
+          disabled={isSubmitting || doneAction === "reopen"}
+          className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+            verdict.verdict === "fail"
+              ? "bg-amber-300 text-black hover:bg-amber-200"
+              : "border border-amber-300/40 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+          }`}
+        >
+          {isSubmitting && transitionState.kind === "submitting" && transitionState.action === "reopen" ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : doneAction === "reopen" ? (
+            <Check size={15} strokeWidth={3} />
+          ) : (
+            <ThumbsDown size={15} />
+          )}
+          {doneAction === "reopen" ? "Reopened" : "Reopen for fix"}
+        </button>
+        <button
+          type="button"
+          onClick={onNeedMoreInfo}
+          disabled={isSubmitting}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 text-sm font-bold text-white transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <HelpCircle size={15} />
+          Need more info
+        </button>
+      </div>
+
+      {transitionState.kind === "error" ? (
+        <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-300/45 bg-red-300/10 px-3 py-2 text-xs text-red-100">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          {transitionState.message}
+        </p>
+      ) : null}
+
+      {doneAction === "mark-done" ? (
+        <p className="mt-3 text-xs text-emerald-100">
+          Buddy moved this ticket to Done in Jira. You&apos;re free to move on.
+        </p>
+      ) : doneAction === "reopen" ? (
+        <p className="mt-3 text-xs text-amber-100">
+          Buddy reopened this for the AI to look again. The next coding-agent will pick it up.
+        </p>
+      ) : null}
+
+      {buildOrCommit ? (
+        <p className="mt-3 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+          Build judged against: {buildOrCommit}
+        </p>
+      ) : null}
+    </motion.div>
+  );
+}
+
+function verdictChipCopy(verdict: FindingsVerdict["verdict"]): {
+  label: string;
+  icon: ReactNode;
+  chipClass: string;
+  cardClass: string;
+} {
+  if (verdict === "pass") {
+    return {
+      label: "AI thinks this is done",
+      icon: <ThumbsUp size={13} />,
+      chipClass: "bg-emerald-300/20 text-emerald-100",
+      cardClass: "border-emerald-300/40 bg-emerald-300/5",
+    };
+  }
+  if (verdict === "fail") {
+    return {
+      label: "AI thinks this needs more work",
+      icon: <ThumbsDown size={13} />,
+      chipClass: "bg-amber-300/20 text-amber-100",
+      cardClass: "border-amber-300/40 bg-amber-300/5",
+    };
+  }
+  return {
+    label: "AI needs more info",
+    icon: <HelpCircle size={13} />,
+    chipClass: "bg-sky-300/20 text-sky-100",
+    cardClass: "border-sky-300/40 bg-sky-300/5",
+  };
+}
+
+// Renders the latest "Human Test Result" comment (if any) so the
+// person testing now sees what previous testers (or they themselves)
+// already wrote — no Jira hop required.
+function PastHumanTestResultsPanel({ results }: { results: HumanTestResultViewModel[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  if (!results.length) return null;
+
+  return (
+    <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--muted-strong)]">
+          <ListChecks size={13} />
+          Past test results ({results.length})
+        </span>
+        {results.length > 1 ? (
+          <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+            Newest first
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        {results.slice(0, 3).map((result) => {
+          const tone = resultTone(result.outcome);
+          const isExpanded = expandedId === result.commentId;
+          return (
+            <div
+              key={result.commentId}
+              className={`rounded-xl border p-3 text-sm leading-6 ${tone.border} ${tone.bg}`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${tone.chip}`}>
+                  {tone.icon}
+                  {tone.label}
+                </span>
+                <span className="text-[11px] text-[var(--muted)]">
+                  {result.verifier || result.author} · {plainRelativeTime(result.created)}
+                </span>
+              </div>
+              {result.aiRecommendation ? (
+                <p className="mt-2 text-sm text-white">
+                  <span className="font-semibold">AI: </span>
+                  {result.aiRecommendation}
+                  {result.aiReasoning ? ` — ${truncate(result.aiReasoning, 140)}` : ""}
+                </p>
+              ) : null}
+              {result.findings ? (
+                <p className="mt-1 text-sm text-[var(--muted-strong)]">
+                  {isExpanded ? result.findings : truncate(result.findings, 140)}
+                </p>
+              ) : null}
+              {(result.findings && result.findings.length > 140) ||
+              (result.aiReasoning && result.aiReasoning.length > 140) ||
+              result.evidence ? (
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(isExpanded ? null : result.commentId)}
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-sky-200 transition-colors hover:text-sky-100"
+                >
+                  <ChevronDown size={12} className={isExpanded ? "rotate-180" : ""} />
+                  {isExpanded ? "Hide full comment" : "Show full comment"}
+                </button>
+              ) : null}
+              {isExpanded && result.evidence ? (
+                <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-white/10 bg-black/40 p-2 text-[12px] leading-5 text-[var(--muted-strong)]">
+                  {result.evidence}
+                </pre>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function resultTone(outcome: HumanTestResultViewModel["outcome"]): {
+  label: string;
+  icon: ReactNode;
+  chip: string;
+  bg: string;
+  border: string;
+} {
+  if (outcome === "pass") {
+    return {
+      label: "Passed",
+      icon: <ThumbsUp size={11} />,
+      chip: "bg-emerald-300/20 text-emerald-100",
+      bg: "bg-emerald-300/5",
+      border: "border-emerald-300/30",
+    };
+  }
+  if (outcome === "fail") {
+    return {
+      label: "Failed",
+      icon: <ThumbsDown size={11} />,
+      chip: "bg-amber-300/20 text-amber-100",
+      bg: "bg-amber-300/5",
+      border: "border-amber-300/30",
+    };
+  }
+  return {
+    label: outcome === "inconclusive" ? "Inconclusive" : "Result",
+    icon: <HelpCircle size={11} />,
+    chip: "bg-sky-300/20 text-sky-100",
+    bg: "bg-sky-300/5",
+    border: "border-sky-300/30",
+  };
+}
+
+function truncate(value: string, max: number): string {
+  if (!value) return "";
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1).trim()}…`;
+}
+
 export default function MvpTicketChecklistClient({ state, accessParam }: Props) {
   const data = isReadyState(state) ? state.data : null;
   const ready = Boolean(data);
@@ -871,6 +1332,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   const workRecipe = data?.workRecipe ?? emptyWorkRecipe;
   const proofRecipe = data?.proofRecipe ?? emptyProofRecipe;
   const humanTestPlan = data?.humanTestPlan ?? emptyHumanTestPlan;
+  const humanTestResults: HumanTestResultViewModel[] = data?.humanTestResults ?? [];
   const [helperHidden, setHelperHidden] = useState(true);
   const [celebration, setCelebration] = useState<string | null>(null);
   const [pollLastChecked, setPollLastChecked] = useState<number>(() => Date.now());
@@ -881,6 +1343,10 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   const [coachState, setCoachState] = useState<CoachState>({ status: "idle" });
   const [copyResult, setCopyResult] = useState<{ id: string; status: "copied" | "failed" } | null>(null);
   const [checks, setChecks] = useState<Record<string, boolean>>(() => (data ? buildEmptyChecks(data) : {}));
+  const [findingsText, setFindingsText] = useState("");
+  const [evidenceText, setEvidenceText] = useState("");
+  const [findingsState, setFindingsState] = useState<FindingsState>({ kind: "idle" });
+  const [transitionState, setTransitionState] = useState<TransitionState>({ kind: "idle" });
   const studentSteps = useMemo(() => (data ? buildStudentTestSteps(data) : []), [data]);
   const activeStepIndex = studentSteps.findIndex((step, index) => !checks[studentStepKey(index, step.title)]);
   const currentStepIndex = activeStepIndex === -1 ? Math.max(studentSteps.length - 1, 0) : activeStepIndex;
@@ -954,6 +1420,107 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
     } finally {
       window.clearTimeout(timeoutId);
     }
+  }
+
+  async function submitFindings() {
+    const trimmed = findingsText.trim();
+    if (!trimmed) return;
+    setTransitionState({ kind: "idle" });
+    setFindingsState({ kind: "submitting" });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), FINDINGS_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch("/api/mvp-ticket-checklist/findings", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issue: issueKey,
+          access: accessParam,
+          findings: trimmed,
+          evidence: evidenceText.trim(),
+        }),
+      });
+
+      const body = (await response.json()) as FindingsBody;
+
+      if (!response.ok || body.status !== "ready") {
+        const message = body.status === "error" && body.message
+          ? body.message
+          : "Buddy couldn't send your findings. Try again.";
+        setFindingsState({ kind: "error", message });
+        return;
+      }
+
+      setFindingsState({ kind: "ready", body });
+
+      // Auto-tick step 4 when the verdict comes back — the user has
+      // genuinely written the result.
+      const step4Index = studentSteps.length - 1;
+      const step4 = studentSteps[step4Index];
+      if (step4) {
+        const key = studentStepKey(step4Index, step4.title);
+        setChecks((current) => ({ ...current, [key]: true }));
+      }
+
+      // Pull fresh ticket state so the new Human Test Result comment
+      // shows up inline immediately. router.refresh runs a server fetch.
+      router.refresh();
+    } catch {
+      setFindingsState({
+        kind: "error",
+        message: "Buddy couldn't reach the server. Check your connection and try again.",
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  async function runTransition(action: "mark-done" | "reopen") {
+    if (findingsState.kind !== "ready") return;
+    const body = findingsState.body;
+    setTransitionState({ kind: "submitting", action });
+    try {
+      const response = await fetch("/api/mvp-ticket-checklist/transition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issue: issueKey,
+          access: accessParam,
+          action,
+          findingsCommentId: body.postedCommentId,
+          aiReasoning: body.verdict.reasoning,
+          buildOrCommit: body.buildOrCommit,
+        }),
+      });
+      const result = (await response.json()) as
+        | { status: "ready"; action: string }
+        | { status: "error"; message: string };
+
+      if (!response.ok || result.status !== "ready") {
+        const message = "message" in result && result.message
+          ? result.message
+          : "The Jira transition didn't go through. Try again.";
+        setTransitionState({ kind: "error", message });
+        return;
+      }
+
+      setTransitionState({ kind: "done", action });
+      // Reload the ticket so the new status reflects in Buddy.
+      router.refresh();
+    } catch {
+      setTransitionState({
+        kind: "error",
+        message: "Buddy couldn't reach Jira. Try again.",
+      });
+    }
+  }
+
+  function dismissFindings() {
+    setFindingsState({ kind: "idle" });
+    setTransitionState({ kind: "idle" });
   }
 
   const stageIndex = data ? currentStageIndex(data.customFields.loopStage) : 0;
@@ -1094,6 +1661,10 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
     }
   }, [hasAgentProof, hasBuild, ready]);
   const currentStepKey = currentStep ? studentStepKey(currentStepIndex, currentStep.title) : "";
+  // Step 4 is "Write pass or fail" (always the last student step). The
+  // findings panel only appears on the active step card on Step 4 — the
+  // earlier steps already have their own primary actions.
+  const isStep4 = studentSteps.length > 0 && currentStepIndex === studentSteps.length - 1;
   const step1LocallyTicked = studentSteps[0]
     ? Boolean(checks[studentStepKey(0, studentSteps[0].title)])
     : false;
@@ -1297,6 +1868,29 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
 
                   {/* The "What the AI tested" panel — replaces the need to hop to Jira. */}
                   <AgentTestSummaryPanel agentUpdate={humanTestPlan.agentUpdate} />
+
+                  {/* Past Human Test Results — what previous testers (or you) wrote.
+                      Always shown when present so verifiers see priors without
+                      leaving Buddy. */}
+                  <PastHumanTestResultsPanel results={humanTestResults} />
+
+                  {/* "Write your findings" panel — only on Step 4 (Result) when
+                      the AI has posted a summary and Jira has named a build. */}
+                  {isStep4 && hasAgentProof && hasBuild ? (
+                    <FindingsPanel
+                      findingsText={findingsText}
+                      setFindingsText={setFindingsText}
+                      evidenceText={evidenceText}
+                      setEvidenceText={setEvidenceText}
+                      state={findingsState}
+                      transitionState={transitionState}
+                      onSubmit={submitFindings}
+                      onMarkDone={() => runTransition("mark-done")}
+                      onReopen={() => runTransition("reopen")}
+                      onNeedMoreInfo={dismissFindings}
+                      onDismissError={() => setFindingsState({ kind: "idle" })}
+                    />
+                  ) : null}
 
                   {statusCard.localNote ? (
                     <p className="mt-3 flex items-center gap-2 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm font-semibold text-amber-100">
