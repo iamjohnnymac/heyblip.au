@@ -1889,7 +1889,34 @@ function buildHumanDeviceStep(
 }
 
 function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewModel {
-  const comment = comments.find((item) => /agent test update/i.test(item.text));
+  // Two parallel picks so a slim "Reopened by human verification" override
+  // (which only carries Agent testing: failed) doesn't blank out the
+  // displayed test plan. We always want:
+  //   - the most recent ATU that actually has plan content for what to
+  //     render on Step 1 (Build/commit, Human test requested, surfaces)
+  //   - the most recent ATU full stop for the Agent testing status
+  // When the most recent comment is the same one that has plan content,
+  // both pickers land on the same comment and the behaviour is identical
+  // to the old single-comment path.
+  const atuComments = comments.filter((item) => /agent test update/i.test(item.text));
+
+  // Comments arrive oldest-first from Jira REST — reverse so newest-first
+  // helpers below scan from the most recent backwards.
+  const newestFirst = [...atuComments].reverse();
+
+  function hasPlanContent(text: string): boolean {
+    return (
+      /^\s*[-*]?\s*Build\/commit\s*:/im.test(text) ||
+      /^\s*Human test requested\s*:/im.test(text) ||
+      /^\s*[-*]?\s*Automated\s*:/im.test(text) ||
+      /^\s*[-*]?\s*Simulator\s*:/im.test(text) ||
+      /^\s*[-*]?\s*Worker smoke\s*:/im.test(text)
+    );
+  }
+
+  const planComment = newestFirst.find((item) => hasPlanContent(item.text)) || newestFirst[0];
+  const statusComment = newestFirst[0];
+  const comment = planComment;
 
   if (!comment) {
     return {
@@ -1913,7 +1940,11 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
     };
   }
 
-  const statusText = readLabeledValue(comment.text, "Agent testing");
+  // Status comes from the MOST RECENT ATU — so a "failed" or
+  // "inconclusive" override flips it off whatever the plan-content
+  // comment originally said. Plan content (build, surfaces, human test
+  // requested) still comes from `comment` above.
+  const statusText = readLabeledValue(statusComment.text, "Agent testing");
   const status = parseAgentStatus(statusText);
   const humanNeededText = readLabeledValue(comment.text, "Human verification needed");
   const humanVerificationNeeded = humanNeededText
