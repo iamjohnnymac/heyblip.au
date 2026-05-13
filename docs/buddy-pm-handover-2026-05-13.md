@@ -718,9 +718,14 @@ Shipped two fixes in `49ba244`:
 - [ ] (open, user-action) Delete BDEV-252 verification-test comment
       (commentId 10449 — the Generate-flow smoke test from today;
       same Atlassian-MCP limitation)
-- [ ] (open, user-action) Add upstream Jira automation rule for
-      BDEV-493-style status drift (PR opened → To Do → In Progress).
-      ~3 minutes at https://heyblip.atlassian.net/jira/settings/automation
+- [x] Added upstream Jira automation rule for BDEV-493-style status
+      drift (PR opened → To Do → In Progress). Created via Rovo from
+      a single natural-language prompt, enabled and live. Owner: John,
+      Scope: Global. Pairs with the existing `PR merged → Verifying
+      (BDEV-378)` rule to form a complete workflow-layer safety net —
+      any BDEV-N PR opened on a connected GitHub repo will pull its
+      ticket all the way to Verifying on merge, regardless of where
+      the ticket started.
 - [ ] (small follow-up code) Triage stalled In Progress tickets — JQL
       for `updated < -30d AND status = "In Progress"`, flag ones that
       look truly abandoned vs ones with recent activity, propose
