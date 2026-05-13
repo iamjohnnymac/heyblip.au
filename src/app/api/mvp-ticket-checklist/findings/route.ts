@@ -35,7 +35,9 @@ const TRANSITION_REOPEN = "4";
 // than haiku (which the coach uses). Roughly 10s end-to-end on a typical
 // findings payload at the time of writing.
 const FINDINGS_MODEL = "anthropic/claude-sonnet-4.6";
-const FINDINGS_TIMEOUT_MS = 15000;
+// Sonnet vision calls take materially longer than text-only — bumped
+// from 15s so a screenshot-bearing verdict has room to land.
+const FINDINGS_TIMEOUT_MS = 45000;
 
 type FindingsPayload = {
   issue?: string;
@@ -44,7 +46,23 @@ type FindingsPayload = {
   findings?: string;
   evidence?: string;
   surfacePassFail?: Record<string, boolean | null>;
+  // Optional metadata for files the client just uploaded via
+  // /findings-attachments. The route fetches each image (server-side,
+  // with Jira auth) and base64-inlines it into the Sonnet call so the
+  // model can actually see the screenshot when grading pass/fail.
+  attachments?: Array<{
+    filename: string;
+    content: string;
+    mimeType: string;
+    size?: number;
+  }>;
 };
+
+// Sonnet vision caps the per-image request size aggressively. We refuse to
+// inline anything bigger than this and let it pass through as a URL link
+// only (Sonnet still sees the filename in the text evidence).
+const MAX_IMAGE_INLINE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGES_PER_VERDICT = 4;
 
 type FindingsResponse =
   | {
@@ -145,12 +163,17 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     sentryIds,
   };
 
+  // Best-effort fetch of attached screenshots so Sonnet can grade against
+  // what the human actually saw. Non-fatal — if any image fails to
+  // download (auth, network), we keep going with the text-only payload.
+  const inlineImages = await fetchAttachmentImagesForVerdict(payload.attachments);
+
   let verdict: FindingsVerdict;
   let source: "openrouter" | "local-fallback" = "local-fallback";
   const openRouterApiKey = process.env.OPENROUTER_API_KEY;
   if (openRouterApiKey) {
     try {
-      verdict = await callOpenRouter(verdictInput, openRouterApiKey);
+      verdict = await callOpenRouter(verdictInput, openRouterApiKey, inlineImages);
       source = "openrouter";
     } catch (error) {
       if (process.env.NODE_ENV !== "production") {
@@ -215,10 +238,35 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
   return NextResponse.json(body);
 }
 
+type InlineImage = { filename: string; mimeType: string; dataUrl: string };
+
 async function callOpenRouter(
   input: FindingsVerdictInput,
   apiKey: string,
+  inlineImages: InlineImage[] = [],
 ): Promise<FindingsVerdict> {
+  // When the user attached screenshots, send the verdict request as a
+  // multimodal user message — Sonnet 4.6 supports images via OpenRouter's
+  // OpenAI-compatible image_url content type. Text only when no images
+  // were attached, so the simple JSON payload still goes through.
+  const textPart = buildFindingsUserPayload(input);
+  const userContent =
+    inlineImages.length > 0
+      ? [
+          { type: "text", text: textPart },
+          ...inlineImages.map((image) => ({
+            type: "image_url",
+            image_url: { url: image.dataUrl },
+          })),
+          {
+            type: "text",
+            text: `\nImage attachments above (in order): ${inlineImages
+              .map((image) => image.filename)
+              .join(", ")}. Use them to confirm or refute the typed findings.`,
+          },
+        ]
+      : textPart;
+
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     signal: createTimeoutSignal(FINDINGS_TIMEOUT_MS),
@@ -235,7 +283,7 @@ async function callOpenRouter(
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: buildFindingsSystemPrompt() },
-        { role: "user", content: buildFindingsUserPayload(input) },
+        { role: "user", content: userContent },
       ],
     }),
   });
@@ -264,6 +312,53 @@ async function callOpenRouter(
     throw new Error("OpenRouter returned no usable text.");
   }
   return parseFindingsVerdict(text);
+}
+
+// Pulls down image attachments from Jira and base64-inlines them so the
+// Sonnet vision call can actually see the screenshot the human just
+// dropped. Auth-gated — we use the same Basic credentials the rest of
+// this route relies on. Non-fatal: any image that fails to fetch (or
+// blows the size limit) is silently dropped so the verdict request can
+// still go through with the remaining ones plus the text payload.
+async function fetchAttachmentImagesForVerdict(
+  attachments: FindingsPayload["attachments"],
+): Promise<InlineImage[]> {
+  if (!attachments || attachments.length === 0) return [];
+  const images = attachments
+    .filter((entry) => entry && typeof entry.mimeType === "string" && entry.mimeType.startsWith("image/"))
+    .slice(0, MAX_IMAGES_PER_VERDICT);
+  if (images.length === 0) return [];
+
+  const config = readJiraConfig();
+  if ("missingEnv" in config) return [];
+  const authHeader = `Basic ${Buffer.from(`${config.email}:${config.token}`).toString("base64")}`;
+
+  // Parallel fetch so 4 images don't cost 4× the latency. Each gets its
+  // own 6s window; any that miss the window or fail auth are dropped
+  // silently and the verdict still goes through with the rest.
+  const settled = await Promise.allSettled(
+    images.map(async (entry): Promise<InlineImage | null> => {
+      if (!entry.content) return null;
+      if (typeof entry.size === "number" && entry.size > MAX_IMAGE_INLINE_BYTES) return null;
+      const response = await fetch(entry.content, {
+        headers: { Authorization: authHeader, Accept: entry.mimeType },
+        signal: createTimeoutSignal(6000),
+      });
+      if (!response.ok) return null;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength === 0 || buffer.byteLength > MAX_IMAGE_INLINE_BYTES) return null;
+      return {
+        filename: entry.filename,
+        mimeType: entry.mimeType,
+        dataUrl: `data:${entry.mimeType};base64,${buffer.toString("base64")}`,
+      };
+    }),
+  );
+  const fetched: InlineImage[] = [];
+  for (const result of settled) {
+    if (result.status === "fulfilled" && result.value) fetched.push(result.value);
+  }
+  return fetched;
 }
 
 function summariseAgentTestUpdate(agentUpdate: AgentTestUpdateViewModel): string {

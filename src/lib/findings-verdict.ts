@@ -35,6 +35,7 @@ export function buildFindingsSystemPrompt(): string {
     "Fail criteria: the findings or evidence directly contradict the fix working, OR the human reports a related-but-different bug.",
     "Inconclusive criteria: the human reports something unrelated, or the findings are too vague to map to acceptance criteria, or evidence is missing where it'd normally be expected (e.g. a Sentry-watch ticket with no Sentry IDs in the evidence).",
     "Never recommend 'pass' just because the human said 'looks fine' or 'seems okay' or 'works' — require a specific behavior match against the acceptance criteria.",
+    "If image attachments are included in the user message, treat them as primary evidence: confirm what the screenshots show matches the typed findings, and call out any contradiction between image and text. If a screenshot shows an error dialog or broken state the human didn't mention, lean towards 'fail' or 'inconclusive' and surface the discrepancy in concerns.",
     "",
     "Write reasoning in plain English. No jargon. The reader does not code. Say 'the app reconnected once' not 'WS reconnect coalescing observed'.",
     "Keep reasoning to 2-3 sentences. Keep next_step to one line.",

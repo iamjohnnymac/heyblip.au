@@ -115,7 +115,10 @@ type BuildStatusState =
   | { kind: "ready"; body: BuildStatusBody };
 
 const COACH_REQUEST_TIMEOUT_MS = 100000;
-const FINDINGS_REQUEST_TIMEOUT_MS = 30_000;
+// Bumped from 30s to 60s so a verdict request that's pulling vision can
+// land — image upload + Sonnet vision call + Jira comment post easily
+// goes over 30s when 1-4 screenshots are attached.
+const FINDINGS_REQUEST_TIMEOUT_MS = 60_000;
 const BUILD_STATUS_POLL_MS = 30_000;
 
 const loopStages = [
@@ -766,6 +769,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
       // can include their links in the evidence the AI sees. Skip when
       // nothing is attached so the path stays a single network call.
       let evidenceWithAttachments = evidenceText.trim();
+      let uploadedAttachments: Array<{ filename: string; content: string; mimeType: string; size: number }> = [];
       if (pendingAttachments.length > 0) {
         const uploadForm = new FormData();
         uploadForm.append("issue", issueKey);
@@ -788,7 +792,8 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
           setFindingsState({ kind: "error", message });
           return;
         }
-        const lines = uploadBody.attachments.map((entry) => {
+        uploadedAttachments = uploadBody.attachments;
+        const lines = uploadedAttachments.map((entry) => {
           const tag = entry.mimeType.startsWith("image/") ? "screenshot" : "log";
           return `Attached ${tag}: ${entry.filename} — ${entry.content}`;
         });
@@ -811,6 +816,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
           access: accessParam,
           findings: trimmed,
           evidence: evidenceWithAttachments,
+          attachments: uploadedAttachments,
         }),
       });
 
