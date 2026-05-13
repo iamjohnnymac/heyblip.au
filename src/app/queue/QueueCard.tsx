@@ -18,7 +18,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Route } from "next";
 import { Check, Loader2, Sparkles } from "lucide-react";
-import { shortenShas } from "@/lib/ticket-queue";
+import { compactBuildHandle, shortenShas } from "@/lib/ticket-queue";
 import type { QueueRowView } from "./QueueClient";
 
 type Props = {
@@ -179,17 +179,26 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
           // anything?". Passed/unknown stays green ("go test"); failed
           // goes red; inconclusive goes amber.
           row.agentTestUpdateStatus === "failed" ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-red-300/55 bg-red-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-red-100">
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-red-300/55 bg-red-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-red-100"
+              title={row.verifiedBuildOrCommit}
+            >
               <Sparkles size={11} strokeWidth={3} aria-hidden="true" />
-              Failed on build {shortenShas(row.verifiedBuildOrCommit)}
+              Failed on {compactBuildHandle(row.verifiedBuildOrCommit)}
             </span>
           ) : row.agentTestUpdateStatus === "inconclusive" ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/45 bg-amber-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-amber-100">
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300/45 bg-amber-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-amber-100"
+              title={row.verifiedBuildOrCommit}
+            >
               <Sparkles size={11} strokeWidth={3} aria-hidden="true" />
-              Needs more info — build {shortenShas(row.verifiedBuildOrCommit)}
+              Needs more info — {compactBuildHandle(row.verifiedBuildOrCommit)}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100">
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100"
+              title={row.verifiedBuildOrCommit}
+            >
               <Check size={11} strokeWidth={3} aria-hidden="true" />
               Fix in build {shortenShas(row.verifiedBuildOrCommit)}
             </span>

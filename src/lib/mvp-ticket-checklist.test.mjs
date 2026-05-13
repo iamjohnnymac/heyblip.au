@@ -613,6 +613,91 @@ test("picks the newest ATU with plan content even when a slim override comment i
   );
 });
 
+test("picker sorts ATU comments by created date — survives newest-first input from Jira REST", () => {
+  // Regression for a production-only bug: getJiraTicketChecklist asks
+  // Jira for comments with `orderBy=-created` (newest-first), but the
+  // picker used to assume oldest-first and `.reverse()` blindly. On
+  // production data that meant the 'reversed' list was actually
+  // oldest-first, and the picker latched onto the earliest preview
+  // ATU. Sort by created date inside the picker to survive either
+  // input order.
+  const planComment = {
+    id: "plan",
+    author: "Agent",
+    created: "2026-05-13T03:07:00.000+0000",
+    text: [
+      "BDEV-407 agent test update",
+      "Agent testing: Passed",
+      "Automated: Passed",
+      "Simulator: Passed",
+      "Worker smoke: Passed",
+      "Build/commit: main@5a1c2e1",
+      "Human test requested:",
+      "1. Use the current TestFlight build that contains main@5a1c2e1.",
+      "2. Phone A: foreground.",
+    ].join("\n"),
+  };
+  const previewComment = {
+    id: "preview",
+    author: "Agent",
+    created: "2026-05-13T01:58:00.000+0000",
+    text: [
+      "BDEV-407 agent test update",
+      "Agent testing: inconclusive",
+      "Build/commit: pending",
+      "Human test requested:",
+      "1. Install the TestFlight build flagged in the final update (likely Build 44+).",
+    ].join("\n"),
+  };
+
+  // Newest-first input order (what production sends).
+  const newestFirstVM = buildChecklistViewModel({
+    issueKey: "BDEV-407",
+    summary: "Push",
+    status: "Verifying",
+    descriptionText: "",
+    customFields: {
+      mvpTrack: "Push/Badge",
+      loopStage: "Human Verifying",
+      verificationSurface: "Two Phones",
+      humanFinalReview: "Ready",
+      verifiedBuildOrCommit: "main@5a1c2e1",
+    },
+    comments: [planComment, previewComment], // newest first
+    links: [],
+    issueUrl: "",
+  });
+
+  // Oldest-first input order (what the Atlassian MCP sends).
+  const oldestFirstVM = buildChecklistViewModel({
+    issueKey: "BDEV-407",
+    summary: "Push",
+    status: "Verifying",
+    descriptionText: "",
+    customFields: {
+      mvpTrack: "Push/Badge",
+      loopStage: "Human Verifying",
+      verificationSurface: "Two Phones",
+      humanFinalReview: "Ready",
+      verifiedBuildOrCommit: "main@5a1c2e1",
+    },
+    comments: [previewComment, planComment], // oldest first
+    links: [],
+    issueUrl: "",
+  });
+
+  // Both orderings must pick the newer plan comment.
+  for (const vm of [newestFirstVM, oldestFirstVM]) {
+    assert.equal(vm.humanTestPlan.agentUpdate.source.created, planComment.created);
+    assert.ok(
+      vm.humanTestPlan.agentUpdate.humanTestRequestedItems.some((item) =>
+        /TestFlight build that contains/i.test(item.body),
+      ),
+      "expected the 13:07 plan to win regardless of input ordering",
+    );
+  }
+});
+
 test("uses concrete proof recipe details when Jira provides them", () => {
   const viewModel = buildChecklistViewModel({
     issueKey: "BDEV-493",

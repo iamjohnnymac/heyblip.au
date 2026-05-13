@@ -1964,9 +1964,18 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   // to the old single-comment path.
   const atuComments = comments.filter((item) => /agent test update/i.test(item.text));
 
-  // Comments arrive oldest-first from Jira REST — reverse so newest-first
-  // helpers below scan from the most recent backwards.
-  const newestFirst = [...atuComments].reverse();
+  // Sort by created date, newest first. We can't rely on API ordering —
+  // getJiraTicketChecklist requests `orderBy=-created` so comments
+  // arrive newest-first, but the Atlassian MCP and some other callers
+  // return them oldest-first. A previous bug here .reverse()'d the
+  // input assuming oldest-first; on production data that meant the
+  // picker iterated OLDEST-first and the earliest preview ATU always
+  // won. Sorting explicitly removes the dependency on API order.
+  const newestFirst = [...atuComments].sort((a, b) => {
+    const aTime = Date.parse(a.created || "") || 0;
+    const bTime = Date.parse(b.created || "") || 0;
+    return bTime - aTime;
+  });
 
   function hasPlanContent(text: string): boolean {
     // The Step 1 panel needs the actual test plan to render anything

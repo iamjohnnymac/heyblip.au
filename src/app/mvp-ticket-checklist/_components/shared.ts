@@ -54,15 +54,19 @@ export function buildProofSha(raw: string): string {
   return "";
 }
 
-export function shortBuildOrCommitChip(raw: string): { label: string; full: string } | null {
+export type BuildChipTone = "success" | "warning" | "danger";
+export type BuildChip = { label: string; full: string; tone: BuildChipTone };
+
+export function shortBuildOrCommitChip(raw: string): BuildChip | null {
   if (!raw) return null;
   // Diagnostic-only commit markers ("production dpl_...; no BDEV-252
   // implementation commit found", "PR #391 (failing)", "pending", "TBD")
   // shouldn't claim "Fix is in" — surface them as a neutral "no fix
   // landed yet" chip so the user doesn't think a real commit handoff
-  // exists.
+  // exists. Warning tone (amber, not green) so the user reads it as
+  // "the build isn't ready" rather than "the build is verified".
   if (/\bno\b.*\bcommit\s+found\b|\bnot found\b|\bnone\s+yet\b|^pending$|^tbd$/i.test(raw.trim())) {
-    return { label: "No fix landed yet", full: raw };
+    return { label: "No fix landed yet", full: raw, tone: "warning" };
   }
   if (/\bfailing\b|\bfailed\b|\bbroken\b/i.test(raw) && !/\bno\b/i.test(raw)) {
     // PR/commit named but flagged as failing — soften the chip so the
@@ -72,27 +76,40 @@ export function shortBuildOrCommitChip(raw: string): { label: string; full: stri
     return {
       label: prNum ? `PR #${prNum} (failing)` : "Build/commit named but failing",
       full: raw,
+      tone: "danger",
     };
   }
   const buildMatch = raw.match(/\bbuild\s+(\d+[a-z]?)\b/i);
   if (buildMatch) {
-    return { label: `Fix is in: build ${buildMatch[1]}`, full: raw };
+    return { label: `Fix is in: build ${buildMatch[1]}`, full: raw, tone: "success" };
   }
   // 7-12 char hex chunk surrounded by backticks or whitespace = a commit SHA
   // worth showing. Skip BDEV/HEY ticket keys so we don't display BDEV-493 here.
   const shaMatch = raw.match(/(?:\s|`|^)([0-9a-f]{7,12})(?:\s|`|$)/i);
   if (shaMatch && !/^BDEV-/i.test(shaMatch[1])) {
-    return { label: `Fix is in: commit ${shaMatch[1]}`, full: raw };
+    return { label: `Fix is in: commit ${shaMatch[1]}`, full: raw, tone: "success" };
   }
   // Last-resort: just show "Build/commit on file" — better than nothing for
   // edge cases like "PR https://github.com/.../pull/391".
   if (/pr\s*[#]?\d+|pull\/\d+/i.test(raw)) {
     const prMatch = raw.match(/pull\/(\d+)|PR\s*#?(\d+)/i);
     const prNum = prMatch ? prMatch[1] || prMatch[2] : "";
-    return { label: prNum ? `Fix is in: PR #${prNum}` : "Build/commit named", full: raw };
+    return {
+      label: prNum ? `Fix is in: PR #${prNum}` : "Build/commit named",
+      full: raw,
+      tone: "success",
+    };
   }
   return null;
 }
+
+// Tailwind class set keyed by chip tone. Co-located with the chip
+// builder so renderers don't drift apart on the colour mapping.
+export const BUILD_CHIP_CLASSES: Record<BuildChipTone, string> = {
+  success: "border-emerald-300/45 bg-emerald-300/10 text-emerald-100",
+  warning: "border-amber-300/45 bg-amber-300/10 text-amber-100",
+  danger: "border-red-300/55 bg-red-300/10 text-red-100",
+};
 
 export async function writeClipboardText(text: string): Promise<boolean> {
   try {

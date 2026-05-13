@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, Clock3, Minus, Sparkles, X as XIcon } from "lucide-react";
 import type { ChecklistViewModel } from "@/lib/mvp-ticket-checklist";
-import { plainRelativeTime, shortBuildOrCommitChip } from "./shared";
+import { BUILD_CHIP_CLASSES, plainRelativeTime, shortBuildOrCommitChip } from "./shared";
 
 // Classifies a surface result string (e.g. "Verified on iPhone 17 Pro sim",
 // "N/A — client-side coalescing fix only.", "Not run") into one of four
@@ -102,10 +102,14 @@ export function AgentTestSummaryPanel({
 
       {buildChip ? (
         <div
-          className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-3 py-1.5 text-sm font-semibold text-emerald-100"
+          className={`mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold ${BUILD_CHIP_CLASSES[buildChip.tone]}`}
           title={buildChip.full}
         >
-          <Check size={14} strokeWidth={3} />
+          {buildChip.tone === "success" ? (
+            <Check size={14} strokeWidth={3} aria-hidden="true" />
+          ) : (
+            <Sparkles size={14} strokeWidth={3} aria-hidden="true" />
+          )}
           {buildChip.label}
         </div>
       ) : null}

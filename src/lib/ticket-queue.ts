@@ -26,6 +26,27 @@ export function shortenShas(value: string): string {
   return value.replace(/\b([0-9a-f]{8,40})\b/gi, (m) => m.slice(0, 7));
 }
 
+// Compact build/commit handle for the queue card pill. Some tickets
+// stash a long diagnostic string into Verified Build/Commit (e.g.
+// "website PR #13 head f653ccb; production dpl_3VwU8Ls4HmKpT2DWV9gm3..."
+// + "(failing)"). The pill needs a short, readable token, not the whole
+// paragraph. Order matters: PR number > build number > 7-char SHA >
+// fallback shortenShas.
+export function compactBuildHandle(value: string): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (/^pending$|^tbd$/i.test(trimmed)) return "pending";
+  const prMatch = trimmed.match(/pull\/(\d+)|PR\s*#?(\d+)/i);
+  if (prMatch) return `PR #${prMatch[1] || prMatch[2]}`;
+  const buildMatch = trimmed.match(/\bbuild\s+(\d+[a-z]?)\b/i);
+  if (buildMatch) return `build ${buildMatch[1]}`;
+  const shaMatch = trimmed.match(/(?:^|[`@/\s])([0-9a-f]{7,40})(?=[`\s)(]|$)/i);
+  if (shaMatch && !/^BDEV-/i.test(shaMatch[1])) return shaMatch[1].slice(0, 7);
+  // Fall back to shortenShas on the first 36 chars so the pill stays a
+  // reasonable width even for unknown-shape strings.
+  return shortenShas(trimmed).slice(0, 36);
+}
+
 export type RawJiraCandidate = {
   key: string;
   fields?: {
