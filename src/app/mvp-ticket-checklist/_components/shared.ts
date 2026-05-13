@@ -83,11 +83,13 @@ export function shortBuildOrCommitChip(raw: string): BuildChip | null {
   if (buildMatch) {
     return { label: `Fix is in: build ${buildMatch[1]}`, full: raw, tone: "success" };
   }
-  // 7-12 char hex chunk surrounded by backticks or whitespace = a commit SHA
-  // worth showing. Skip BDEV/HEY ticket keys so we don't display BDEV-493 here.
-  const shaMatch = raw.match(/(?:\s|`|^)([0-9a-f]{7,12})(?:\s|`|$)/i);
+  // 7-40 char hex chunk = a commit SHA worth showing. Accept `, whitespace,
+  // `@`, or `/` as the leading boundary so we catch `main@5a1c2e1a...`,
+  // `origin/main/abc123`, and the canonical backtick form. Skip BDEV/HEY
+  // ticket keys so we don't display BDEV-493 here.
+  const shaMatch = raw.match(/(?:\s|`|^|@|\/)([0-9a-f]{7,40})(?=[\s`)(.,]|$)/i);
   if (shaMatch && !/^BDEV-/i.test(shaMatch[1])) {
-    return { label: `Fix is in: commit ${shaMatch[1]}`, full: raw, tone: "success" };
+    return { label: `Fix is in: commit ${shaMatch[1].slice(0, 7)}`, full: raw, tone: "success" };
   }
   // Last-resort: just show "Build/commit on file" — better than nothing for
   // edge cases like "PR https://github.com/.../pull/391".
