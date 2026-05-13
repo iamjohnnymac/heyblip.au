@@ -1905,13 +1905,22 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   const newestFirst = [...atuComments].reverse();
 
   function hasPlanContent(text: string): boolean {
-    return (
-      /^\s*[-*]?\s*Build\/commit\s*:/im.test(text) ||
-      /^\s*Human test requested\s*:/im.test(text) ||
-      /^\s*[-*]?\s*Automated\s*:/im.test(text) ||
-      /^\s*[-*]?\s*Simulator\s*:/im.test(text) ||
-      /^\s*[-*]?\s*Worker smoke\s*:/im.test(text)
-    );
+    // The Step 1 panel needs the actual test plan to render anything
+    // useful — that's the "Human test requested:" numbered list. The
+    // slim "Reopened by human verification" override comments carry a
+    // Build/commit line but no plan body, so requiring HTR (or HTR +
+    // any surface) keeps the picker from latching onto them.
+    const hasHTR = /^\s*Human test requested\s*:/im.test(text);
+    if (hasHTR) return true;
+    // Fallback: a comment that lists at least two of the surface labels
+    // alongside Build/commit is still a structured ATU even if the
+    // agent skipped the HTR block. Single Build/commit alone is not.
+    const surfaceHits = [
+      /^\s*[-*]?\s*Automated\s*:/im.test(text),
+      /^\s*[-*]?\s*Simulator\s*:/im.test(text),
+      /^\s*[-*]?\s*Worker smoke\s*:/im.test(text),
+    ].filter(Boolean).length;
+    return surfaceHits >= 2 && /^\s*[-*]?\s*Build\/commit\s*:/im.test(text);
   }
 
   const planComment = newestFirst.find((item) => hasPlanContent(item.text)) || newestFirst[0];
