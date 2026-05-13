@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Route } from "next";
 import { Loader2, Sparkles } from "lucide-react";
+import { shortenShas } from "@/lib/ticket-queue";
 import type { QueueRowView } from "./QueueClient";
 
 type Props = {
@@ -212,7 +213,7 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
         )}
         {row.hasBuild && row.verifiedBuildOrCommit ? (
           <span className="inline-flex items-center rounded-full border border-sky-300/35 bg-sky-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-sky-100">
-            build {row.verifiedBuildOrCommit}
+            build {shortenShas(row.verifiedBuildOrCommit)}
           </span>
         ) : null}
         {blocksCount > 0 ? (

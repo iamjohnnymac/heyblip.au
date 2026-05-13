@@ -1,8 +1,34 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, ExternalLink, GitBranch } from "lucide-react";
 import { decodeHtmlEntities, statusTone, textWrapStyle } from "./shared";
+
+// Renders a plain string with `backtick-wrapped` runs as inline <code>.
+// Used wherever Jira-sourced copy reaches the UI as a string (step bodies,
+// AI plan paragraphs). Anything not wrapped in backticks renders as-is.
+export function InlineMarkdown({ value }: { value: string }) {
+  if (!value) return null;
+  if (!value.includes("`")) return <>{value}</>;
+  const parts = value.split(/`([^`]+)`/g);
+  return (
+    <>
+      {parts.map((chunk, idx) => {
+        if (!chunk) return null;
+        return idx % 2 === 0 ? (
+          <Fragment key={idx}>{chunk}</Fragment>
+        ) : (
+          <code
+            key={idx}
+            className="box-decoration-clone rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)] [overflow-wrap:anywhere]"
+          >
+            {chunk}
+          </code>
+        );
+      })}
+    </>
+  );
+}
 
 export function CopyButton({
   status,

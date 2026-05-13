@@ -36,7 +36,7 @@ import {
 import { PastHumanTestResultsPanel } from "./_components/PastHumanTestResults";
 import { AskBuddyInline } from "./_components/AskBuddyInline";
 import { ErrorPanel } from "./_components/ErrorPanel";
-import { CopyButton, DisclosurePanel, IssueLinkRow } from "./_components/SmallComponents";
+import { CopyButton, DisclosurePanel, InlineMarkdown, IssueLinkRow } from "./_components/SmallComponents";
 import {
   decodeHtmlEntities,
   humaniseTimestamps,
@@ -1070,7 +1070,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   return (
     <main className="mesh-gradient min-h-screen bg-[var(--background)] text-[var(--foreground)]">
       <div
-        className={`mx-auto max-w-3xl px-4 sm:px-6 pt-5 ${
+        className={`mx-auto max-w-4xl px-4 sm:px-6 pt-5 ${
           stickyBarActive ? "pb-32 md:pb-12" : "pb-12"
         }`}
       >
@@ -1172,9 +1172,9 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               stepIndex={currentStepIndex}
               totalSteps={Math.max(studentSteps.length, 1)}
               title={currentStep ? currentStep.title : "Write the result in Jira"}
-              subtitle={currentStep?.body || "Add the final PASS or FAIL result to Jira."}
-              okWhen={currentStep?.pass}
-              offWhenIf={currentStep?.fail}
+              subtitle={<InlineMarkdown value={currentStep?.body || "Add the final PASS or FAIL result to Jira."} />}
+              okWhen={currentStep?.pass ? <InlineMarkdown value={currentStep.pass} /> : undefined}
+              offWhenIf={currentStep?.fail ? <InlineMarkdown value={currentStep.fail} /> : undefined}
               liveLabel={pollEnabled ? `Live · ${pollAgeLabel}` : undefined}
               toneClass={focusTone}
             >

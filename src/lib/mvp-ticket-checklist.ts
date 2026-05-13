@@ -2407,7 +2407,13 @@ function buildCodingAgentPrompt(
     "",
     `Ticket: ${input.issueUrl}`,
     `Branch: ${branchName}`,
-    `PR title: fix(${workRecipe.kind.toLowerCase().replace(/[^a-z0-9]+/g, "-")}): ${input.summary} (${input.issueKey})`,
+    (() => {
+      const tagMatch = input.summary.match(/^\s*\[([A-Z0-9/]+)\]\s*/);
+      const scopeSource = tagMatch ? tagMatch[1] : workRecipe.kind;
+      const scope = scopeSource.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const titleSummary = tagMatch ? input.summary.replace(tagMatch[0], "").trim() : input.summary;
+      return `PR title: fix(${scope}): ${titleSummary} (${input.issueKey})`;
+    })(),
     "",
     "Repository rules:",
     "- Read the nearest AGENTS.md / CLAUDE.md before editing.",

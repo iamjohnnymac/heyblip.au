@@ -17,6 +17,15 @@ const MVP_CUSTOM_FIELDS = {
   verifiedBuildOrCommit: "customfield_10047",
 } as const;
 
+// Compact long git SHAs (8-40 hex chars) to their short form so card-surface
+// labels don't smear across the whole row. Operates on any string — leaves
+// build numbers, branch names, and ticket keys alone because they don't
+// match the all-hex pattern.
+export function shortenShas(value: string): string {
+  if (!value) return "";
+  return value.replace(/\b([0-9a-f]{8,40})\b/gi, (m) => m.slice(0, 7));
+}
+
 export type RawJiraCandidate = {
   key: string;
   fields?: {
@@ -375,7 +384,7 @@ export function rankCandidates({ candidates, recentlyLoadedKeys, now = Date.now(
     const hasBuild = Boolean(candidate.verifiedBuildOrCommit && candidate.verifiedBuildOrCommit.toLowerCase() !== "not set");
     if (hasBuild) {
       score += 3;
-      reasons.push(`build ${candidate.verifiedBuildOrCommit}`);
+      reasons.push(`build ${shortenShas(candidate.verifiedBuildOrCommit)}`);
     } else {
       reasons.push("no build named yet");
     }

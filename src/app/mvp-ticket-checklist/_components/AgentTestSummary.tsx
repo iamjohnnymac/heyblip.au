@@ -113,7 +113,7 @@ export function AgentTestSummaryPanel({
       {items.length > 0 || fallbackHumanTest ? (
         <div className="mt-4">
           <h3 className="text-base font-semibold text-white">What to do on the phone</h3>
-          {agentUpdate.humanTestRequestedPreamble ? (
+          {items.length > 0 && agentUpdate.humanTestRequestedPreamble ? (
             <p className="mt-1.5 text-sm leading-6 text-[var(--muted-strong)]">
               {agentUpdate.humanTestRequestedPreamble}
             </p>
