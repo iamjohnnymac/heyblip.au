@@ -648,14 +648,44 @@ build succeeds. Pushed + deployed via `npx vercel deploy --prod
 - ✅ Worktree `heyblip-au-fork-features` removed, feature branch
   `feat/generate-summary-and-backlog-section` deleted
 
-### One pre-existing issue noticed (not introduced by today's work)
+### One pre-existing issue noticed (not introduced by today's work) — fixed in `49ba244`
 
-The loosened JQL surfaces some BDEV **Epics** as cards in the backlog
+The loosened JQL surfaced BDEV **Epics** as cards in the backlog
 (BDEV-380 Push Notifications, BDEV-382 Auth & Identity, BDEV-383 Chat
-Experience, BDEV-385, BDEV-386, BDEV-387, BDEV-381). Epics shouldn't
-be in the testing queue — they're containers, not test items. Needs
-an `issuetype != Epic` filter added to `buildQueueJql()`. ~5 LOC fix
-when convenient. Flagged for the next session.
+Experience, BDEV-385, BDEV-386, BDEV-387, BDEV-381). Epics aren't
+testable. Fixed by adding `AND issuetype != "Epic"` to
+`buildQueueJql()`. Verified on production — no Epic cards in the
+backlog after redeploy.
+
+### Late-late-session: queue gap fix (`49ba244`)
+
+John spotted a conceptual gap mid-conversation: an In Progress ticket
+where the AI claims `Agent testing: passed` but the Jira workflow
+status didn't auto-transition would be stuck in "In progress" forever
+— the queue bucketing only looked at status + humanFinalReview +
+loopStage, never at the AI summary's own pass/fail signal. Same root
+cause as the BDEV-493 status-drift bug, surfaced from a different
+angle.
+
+Shipped two fixes in `49ba244`:
+
+1. **Epic filter** — see above.
+2. **Queue bucket fallback** — `scanComments` now also parses the
+   `Agent testing:` labelled value from the Agent Test Update comment
+   ("passed" / "failed" / "inconclusive" / "unknown"). The new field
+   `agentTestUpdateStatus` propagates through `QueueCandidate` →
+   `QueueRow` → `QueueRowView`. `isReady` in `QueueClient.tsx` adds a
+   final fallback: `status === "in progress" && agentTestUpdateStatus
+   === "passed"` → promote to "Ready for you".
+   - Defence in depth alongside the eventual Jira automation rule fix
+     (`PR opened → To Do → In Progress`). Either fix alone closes the
+     drift; both makes it bulletproof.
+   - 6 new tests in `ticket-queue.test.mjs`. Now 86 tests across the
+     four test files (was 81 after the build agent's work).
+   - No current ticket triggers the fallback (all 20 In Progress
+     tickets got `inconclusive` previews from the batch agents, none
+     `passed`), but the path is wired and will fire on the next real
+     PR merge that posts `passed` without the workflow moving.
 
 ## Final state checklist (end of session 2026-05-13 ~14:30 AWST)
 
@@ -675,19 +705,26 @@ when convenient. Flagged for the next session.
 - [x] **"Not yet picked up" backlog section live** (27 cards visible)
 - [x] End-to-end verification on the Generate flow (BDEV-252 confirmed)
 - [x] All worktrees removed, all feature branches deleted
-- [ ] (small follow-up) Filter `issuetype != Epic` from queue JQL so
-      Epics stop appearing in the backlog section. ~5 LOC.
-- [ ] (small follow-up) Triage stalled In Progress tickets — JQL for
-      `updated < -30d AND status = "In Progress"`, flag ones that look
-      truly abandoned vs ones with recent activity, propose closes
-- [ ] (open) rotate the Vercel token used this session
-      (`vcp_2wdlx11BFSHm…`)
-- [ ] (open) delete BDEV-352 E2E test comment (cosmetic, harmless)
-- [ ] (open) delete BDEV-252 verification-test comment from the
-      Generate flow smoke test (commentId 10449 — also harmless,
-      mark it as a test artefact if leaving it)
-- [ ] (open) add upstream Jira automation rule for BDEV-493-style
-      status drift (PR opened → To Do → In Progress)
+- [x] Epic filter on queue JQL shipped (`49ba244`)
+- [x] Queue Ready-bucket fallback for `passed` In Progress tickets
+      shipped (`49ba244`) — defence in depth alongside the eventual
+      Jira automation rule fix
+- [ ] (open, user-action) Rotate the Vercel token used this session
+      (`vcp_2wdlx11BFSHm…`). Generate a new one at
+      `https://vercel.com/account/tokens`, revoke the old.
+- [ ] (open, user-action) Delete BDEV-352 E2E test comment from Jira
+      UI (cosmetic, harmless — Atlassian MCP doesn't expose a
+      delete-comment tool from this box)
+- [ ] (open, user-action) Delete BDEV-252 verification-test comment
+      (commentId 10449 — the Generate-flow smoke test from today;
+      same Atlassian-MCP limitation)
+- [ ] (open, user-action) Add upstream Jira automation rule for
+      BDEV-493-style status drift (PR opened → To Do → In Progress).
+      ~3 minutes at https://heyblip.atlassian.net/jira/settings/automation
+- [ ] (small follow-up code) Triage stalled In Progress tickets — JQL
+      for `updated < -30d AND status = "In Progress"`, flag ones that
+      look truly abandoned vs ones with recent activity, propose
+      closes. More research than code; defer to next session.
 - [ ] (open from 2026-05-08) `GITHUB_TOKEN` → fine-grained PAT
 - [ ] (open from 2026-05-08) `dSYM` warning on Sentry.framework
 - [ ] (open from 2026-05-08) ASC API for true TestFlight-ready signal
