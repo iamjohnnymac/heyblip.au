@@ -1910,17 +1910,20 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
     // slim "Reopened by human verification" override comments carry a
     // Build/commit line but no plan body, so requiring HTR (or HTR +
     // any surface) keeps the picker from latching onto them.
-    const hasHTR = /^\s*Human test requested\s*:/im.test(text);
-    if (hasHTR) return true;
-    // Fallback: a comment that lists at least two of the surface labels
-    // alongside Build/commit is still a structured ATU even if the
-    // agent skipped the HTR block. Single Build/commit alone is not.
+    //
+    // No line-start anchor here on purpose. adfToPlainText doesn't
+    // always emit a newline before every labelled segment (depends on
+    // whether the AI wrote each label as its own paragraph or chained
+    // them into one), so requiring `^` made the predicate miss the
+    // 13:07-style "all-in-one-paragraph" comments and fall back to an
+    // older preview ATU.
+    if (/\bHuman test requested\s*:/i.test(text)) return true;
     const surfaceHits = [
-      /^\s*[-*]?\s*Automated\s*:/im.test(text),
-      /^\s*[-*]?\s*Simulator\s*:/im.test(text),
-      /^\s*[-*]?\s*Worker smoke\s*:/im.test(text),
+      /\bAutomated\s*:/i.test(text),
+      /\bSimulator\s*:/i.test(text),
+      /\bWorker smoke\s*:/i.test(text),
     ].filter(Boolean).length;
-    return surfaceHits >= 2 && /^\s*[-*]?\s*Build\/commit\s*:/im.test(text);
+    return surfaceHits >= 2 && /\bBuild\/commit\s*:/i.test(text);
   }
 
   const planComment = newestFirst.find((item) => hasPlanContent(item.text)) || newestFirst[0];
@@ -1978,11 +1981,23 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   const sentryWatchIds = extractSentryIds(humanTestLines.join("\n"));
   const { passIf, failIf } = extractTestExpectations(humanTestRequested);
 
+  // Build/commit can land under several labels:
+  //   - "Build/commit:" (canonical)
+  //   - "Build/commit for human verification:" (some agents write it long-form)
+  // and the plan comment may also omit it entirely while the override/status
+  // comment carries it. Fall back through both so the Step 1 chip still
+  // renders on tickets like BDEV-407 where the plan comment uses the
+  // long-form label.
+  const buildOrCommit =
+    readLabeledValue(comment.text, "Build/commit") ||
+    readLabeledValue(comment.text, "Build/commit for human verification") ||
+    (statusComment !== comment ? readLabeledValue(statusComment.text, "Build/commit") : "");
+
   return {
     found: true,
     status,
     label: status === "passed" ? "Agent checks passed" : status === "failed" ? "Agent checks failed" : "Agent update found",
-    buildOrCommit: readLabeledValue(comment.text, "Build/commit"),
+    buildOrCommit,
     humanVerificationNeeded,
     humanTestRequested,
     humanTestRequestedItems,

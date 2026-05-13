@@ -526,6 +526,93 @@ test("parses heading-style 'Human test requested' with ordered list items and co
   assert.deepEqual(update.sentryWatchIds.sort(), ["APPLE-IOS-4J", "APPLE-IOS-4K"]);
 });
 
+test("picks the newest ATU with plan content even when a slim override comment is most recent", () => {
+  // Mirrors BDEV-407: the very latest ATU is a slim 'reopened by human
+  // verification' override that only carries Agent testing: + Build/commit:
+  // (no Human test requested block). The picker should still surface the
+  // previous ATU that has the actual plan body, and the build/commit chip
+  // should fall back to either the long-form label or the status comment
+  // so the Step 1 panel still renders the build pill.
+  const viewModel = buildChecklistViewModel({
+    issueKey: "BDEV-407",
+    summary: "Auth recovery",
+    status: "In Progress",
+    descriptionText: "Acceptance.",
+    customFields: {
+      mvpTrack: "Auth",
+      loopStage: "Failed/Reopened",
+      verificationSurface: "One Phone, Two Phone",
+      humanFinalReview: "Failed",
+      verifiedBuildOrCommit: "main@5a1c2e1",
+    },
+    comments: [
+      {
+        id: "old-preview",
+        author: "Agent",
+        created: "2026-05-13T01:58:00.000+0000",
+        text: [
+          "BDEV-407 agent test update",
+          "Agent testing: inconclusive",
+          "Build/commit: pending",
+          "Human verification needed: No",
+          "Human test requested:",
+          "1. Install the TestFlight build flagged in the final update (likely Build 44+).",
+        ].join("\n"),
+      },
+      {
+        id: "plan-long-form-label",
+        author: "Agent",
+        created: "2026-05-13T03:07:00.000+0000",
+        text: [
+          "BDEV-407 agent test update",
+          "Agent testing: Passed for agent-verifiable server/observability checks.",
+          "Automated: Passed",
+          "Simulator: Not run today.",
+          "Worker smoke: Passed by local Cloudflare Worker/Vitest suites.",
+          "Build/commit for human verification: main@5a1c2e1",
+          "Human verification needed: Yes.",
+          "Human test requested:",
+          "1. Use the current TestFlight build that contains main@5a1c2e1.",
+          "2. Phone A: foreground, signed in as one test account.",
+          "3. Phone B: locked for ~10 seconds.",
+        ].join("\n"),
+      },
+      {
+        id: "slim-override",
+        author: "Buddy",
+        created: "2026-05-13T03:30:00.000+0000",
+        text: [
+          "BDEV-407 agent test update — Reopened by human verification",
+          "Agent testing: failed",
+          "Build/commit: main@5a1c2e1",
+          "Human verification needed: yes",
+        ].join("\n"),
+      },
+    ],
+    links: [],
+    issueUrl: "https://heyblip.atlassian.net/browse/BDEV-407",
+  });
+
+  const update = viewModel.humanTestPlan.agentUpdate;
+  assert.equal(update.found, true);
+  // Status flips off the most-recent override (failed), not the plan ATU.
+  assert.equal(update.status, "failed");
+  // Build/commit falls back through the long-form label OR the status
+  // comment so the chip still renders.
+  assert.equal(update.buildOrCommit, "main@5a1c2e1");
+  // Plan content comes from the 13:07 comment, NOT from the 11:58 preview.
+  assert.ok(
+    update.humanTestRequestedItems.some(
+      (item) => /Phone A/i.test(item.title) || /Phone A/i.test(item.body),
+    ),
+    "expected the 13:07 plan ('Phone A' step) to win the picker",
+  );
+  assert.ok(
+    !update.humanTestRequestedItems.some((item) => /Build 44/i.test(item.body)),
+    "the 11:58 preview ATU should not be the source of plan items",
+  );
+});
+
 test("uses concrete proof recipe details when Jira provides them", () => {
   const viewModel = buildChecklistViewModel({
     issueKey: "BDEV-493",
