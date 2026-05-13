@@ -94,9 +94,13 @@ export function AgentTestSummaryPanel({
     : "";
 
   return (
-    <div className="mt-5 border-t border-white/10 pt-5">
+    // min-w-0 + w-full so the panel can shrink inside its parent grid
+    // (the "grid gap-4" wrapper on Step 1) — without it the panel's
+    // children with `min-width: auto` (default for grid items) stretch
+    // the panel to 2073px on a 390px viewport.
+    <div className="mt-5 w-full min-w-0 border-t border-white/10 pt-5">
       <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--accent-light)]">
-        <Sparkles size={13} />
+        <Sparkles size={13} aria-hidden="true" />
         What the AI tested
       </div>
 
