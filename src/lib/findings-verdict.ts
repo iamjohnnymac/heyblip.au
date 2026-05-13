@@ -153,7 +153,12 @@ export function buildHumanTestResultComment(input: {
   if (input.evidence.trim()) {
     lines.push("Evidence:");
     lines.push("```");
-    lines.push(input.evidence.trim());
+    // If a user pastes evidence containing a triple-backtick, it would
+    // close our fence early and inject formatting/structure into the
+    // Jira comment. Replace any embedded ``` with a visually-similar
+    // form that won't break the fence. Single/double backticks pass
+    // through untouched so inline `code` still renders correctly.
+    lines.push(input.evidence.trim().replace(/```/g, "''`"));
     lines.push("```");
     lines.push("");
   } else {

@@ -872,7 +872,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
         }),
       });
       const result = (await response.json()) as
-        | { status: "ready"; action: string }
+        | { status: "ready"; action: string; partialFailures?: string[] }
         | { status: "error"; message: string };
 
       if (!response.ok || result.status !== "ready") {
@@ -883,7 +883,14 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
         return;
       }
 
-      setTransitionState({ kind: "done", action });
+      setTransitionState({
+        kind: "done",
+        action,
+        // Pass partial-failure messages through so the UI can surface
+        // "transition went through but field reset failed" — the user
+        // needs to know if the queue may not have updated.
+        partialFailures: result.partialFailures,
+      });
       router.refresh();
     } catch {
       setTransitionState({

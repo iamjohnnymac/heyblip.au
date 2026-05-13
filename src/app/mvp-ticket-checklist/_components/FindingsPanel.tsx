@@ -52,7 +52,7 @@ export type FindingsState =
 export type TransitionState =
   | { kind: "idle" }
   | { kind: "submitting"; action: "mark-done" | "reopen" }
-  | { kind: "done"; action: "mark-done" | "reopen" }
+  | { kind: "done"; action: "mark-done" | "reopen"; partialFailures?: string[] }
   | { kind: "error"; message: string };
 
 // "Write your findings" panel — the new Step 4 input that turns human
@@ -343,6 +343,27 @@ function VerdictCard({
               </p>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {transitionState.kind === "done"
+        && transitionState.partialFailures
+        && transitionState.partialFailures.length > 0 ? (
+        <div className="mt-3 rounded-xl border border-amber-300/45 bg-amber-300/10 px-3 py-3 text-xs text-amber-100">
+          <p className="font-semibold">
+            Jira moved the ticket, but some follow-up writes didn&apos;t land:
+          </p>
+          <ul className="mt-1.5 grid list-none gap-1 pl-0">
+            {transitionState.partialFailures.map((message, idx) => (
+              <li key={idx} className="flex items-start gap-1.5">
+                <span className="mt-1 inline-flex h-1 w-1 shrink-0 rounded-full bg-amber-200" />
+                <span>{message}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[10px] uppercase tracking-wide text-amber-200/80">
+            The queue may still show this ticket in its old bucket — refresh and flag PM if it doesn&apos;t self-correct.
+          </p>
         </div>
       ) : null}
 

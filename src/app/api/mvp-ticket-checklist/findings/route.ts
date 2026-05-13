@@ -78,6 +78,11 @@ type FindingsResponse =
       };
       cached: boolean;
       source: "openrouter" | "local-fallback";
+      // Populated when the verdict landed but a best-effort Jira write
+      // (HFR reset, ATU override comment) failed. The detail page
+      // surfaces this so the user knows the queue may not reflect the
+      // new state without manual cleanup.
+      partialFailures?: string[];
     }
   | { status: "error"; message: string };
 
@@ -129,6 +134,17 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
   }
   const evidence = (payload.evidence || "").trim();
 
+  // Early-fail if Jira isn't configured BEFORE we burn an OpenRouter
+  // call. If we ran Sonnet first and Jira was missing, the verdict
+  // would be computed (billed) then discarded with a 503.
+  const earlyJiraConfig = readJiraConfig();
+  if ("missingEnv" in earlyJiraConfig) {
+    return NextResponse.json(
+      { status: "error", message: "Jira is not configured on the server." },
+      { status: 503 },
+    );
+  }
+
   // Server-side reload of the ticket so we judge against the canonical
   // Jira state, not a stale client-side cache. Also gives us the
   // pre-computed acceptance criteria / Agent Test Update for the
@@ -143,7 +159,15 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     data.humanTestPlan.agentUpdate.buildOrCommit || data.customFields.verifiedBuildOrCommit || "";
 
   // Dedupe accidental double-submits on the same findings within 30s.
-  const cacheKey = `${issueKey}:${hashFindings(findings, evidence)}`;
+  // Attachment filenames + sizes are folded into the cache key — without
+  // this, a re-submit with a screenshot would return the cached
+  // text-only verdict and skip Sonnet vision entirely.
+  const attachmentSignature = (payload.attachments || [])
+    .map((a) => `${a.filename || ""}:${a.size || 0}:${(a.mimeType || "").toLowerCase()}`)
+    .sort()
+    .join("|");
+  const surfaceSignature = JSON.stringify(payload.surfacePassFail || {});
+  const cacheKey = `${issueKey}:${hashFindings(findings, evidence)}:${attachmentSignature}:${surfaceSignature}`;
   const now = Date.now();
   const cached = getCachedVerdict(cacheKey, now);
   if (cached && typeof cached === "object" && "verdict" in (cached as Record<string, unknown>)) {
@@ -235,17 +259,16 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     aiVerdict: verdict,
   });
 
-  const jiraConfig = readJiraConfig();
-  let postedCommentId = "";
+  // jiraConfig was already validated near the top of the handler, but
+  // re-narrow for TypeScript so the postJiraComment call types correctly.
+  const jiraConfig = earlyJiraConfig;
   if ("missingEnv" in jiraConfig) {
     return NextResponse.json(
-      {
-        status: "error",
-        message: "Jira is not configured on the server, so this comment can't be posted.",
-      },
+      { status: "error", message: "Jira is not configured on the server." },
       { status: 503 },
     );
   }
+  let postedCommentId = "";
 
   try {
     postedCommentId = await postJiraComment(jiraConfig, issueKey, commentText);
@@ -258,20 +281,25 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
   // in Jira state so the queue / detail page don't keep showing the
   // ticket as Ready for you. The user can still click Mark Done /
   // Reopen / Need more info — but the fields are honest in the meantime.
-  // All writes are best-effort: a failure here logs and continues, since
-  // the verdict + Human Test Result comment have already landed.
+  // All writes are best-effort: a failure here logs (in every env) but
+  // doesn't fail the verdict response, since the Human Test Result
+  // comment is already posted. The response carries `partialFailures`
+  // so the UI can surface a "queue may not have updated" warning.
+  const findingsPartialFailures: string[] = [];
   if (verdict.verdict === "fail" || verdict.verdict === "inconclusive") {
+    // Inconclusive ≠ failed verification. Setting HFR=Failed for an
+    // inconclusive verdict would tell the queue the ticket failed when
+    // really it's "needs more info" — drop it to Not Ready instead so
+    // someone can re-test once the conditions improve.
+    const targetHfr = verdict.verdict === "inconclusive" ? "Not Ready" : "Failed";
     try {
       await editJiraIssueFields(jiraConfig, issueKey, {
-        customfield_10046: { value: "Failed" }, // Human Final Review
+        customfield_10046: { value: targetHfr },
       });
     } catch (error) {
-      if (process.env.NODE_ENV !== "production") {
-        console.warn(
-          `[findings route] HFR=Failed write failed for ${issueKey}:`,
-          error instanceof Error ? error.message : "unknown error",
-        );
-      }
+      const message = error instanceof Error ? error.message : "unknown error";
+      console.warn(`[findings route] HFR=${targetHfr} write failed for ${issueKey}:`, message);
+      findingsPartialFailures.push(`Could not update Human Final Review to ${targetHfr}: ${message}`);
     }
 
     // Override the prior "Agent testing: passed" so scanComments's
@@ -288,12 +316,9 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
       });
       await postJiraComment(jiraConfig, issueKey, override);
     } catch (error) {
-      if (process.env.NODE_ENV !== "production") {
-        console.warn(
-          `[findings route] ATU override post failed for ${issueKey}:`,
-          error instanceof Error ? error.message : "unknown error",
-        );
-      }
+      const message = error instanceof Error ? error.message : "unknown error";
+      console.warn(`[findings route] ATU override post failed for ${issueKey}:`, message);
+      findingsPartialFailures.push(`Could not post the Agent Test Update override comment: ${message}`);
     }
   }
 
@@ -308,6 +333,7 @@ export async function POST(request: Request): Promise<NextResponse<FindingsRespo
     },
     cached: false,
     source,
+    partialFailures: findingsPartialFailures.length ? findingsPartialFailures : undefined,
   };
 
   setCachedVerdict(cacheKey, body, now);

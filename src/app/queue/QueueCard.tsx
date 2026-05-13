@@ -160,13 +160,27 @@ export default function QueueCard({ row, accessParam, accessParamForGenerate }: 
           </span>
         ) : null}
         {row.hasAgentTestUpdate && row.hasBuild && row.verifiedBuildOrCommit ? (
-          // Summary + build = AI has shipped real code; this is something
-          // you can actually pick up your phone and verify. Green is the
-          // "go test" signal across the dashboard.
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100">
-            <Check size={11} strokeWidth={3} />
-            Fix in build {shortenShas(row.verifiedBuildOrCommit)}
-          </span>
+          // Summary + build = AI has shipped real code. The pill colour
+          // mirrors the latest AI verdict so the queue answers
+          // "is the fix actually working?" not just "did the AI write
+          // anything?". Passed/unknown stays green ("go test"); failed
+          // goes red; inconclusive goes amber.
+          row.agentTestUpdateStatus === "failed" ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-red-300/55 bg-red-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-red-100">
+              <Sparkles size={11} strokeWidth={3} />
+              Failed on build {shortenShas(row.verifiedBuildOrCommit)}
+            </span>
+          ) : row.agentTestUpdateStatus === "inconclusive" ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/45 bg-amber-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-amber-100">
+              <Sparkles size={11} strokeWidth={3} />
+              Needs more info — build {shortenShas(row.verifiedBuildOrCommit)}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/45 bg-emerald-300/10 px-2 py-[0.18rem] text-[0.66rem] font-bold leading-none text-emerald-100">
+              <Check size={11} strokeWidth={3} />
+              Fix in build {shortenShas(row.verifiedBuildOrCommit)}
+            </span>
+          )
         ) : row.hasAgentTestUpdate ? (
           // Summary but no build = AI's only written a plan (either
           // Generate-AI-Summary was tapped, or the agent commented without

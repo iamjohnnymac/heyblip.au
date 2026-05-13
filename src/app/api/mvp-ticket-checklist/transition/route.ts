@@ -34,7 +34,16 @@ type TransitionPayload = {
 };
 
 type TransitionResponse =
-  | { status: "ready"; action: TransitionAction; verificationCommentId: string }
+  | {
+      status: "ready";
+      action: TransitionAction;
+      verificationCommentId: string;
+      // Populated when the status transition succeeded but a follow-up
+      // best-effort write (HFR/Loop Stage reset, ATU override comment)
+      // failed. The detail page surfaces this so the user knows the
+      // queue may not reflect the new state without a manual cleanup.
+      partialFailures?: string[];
+    }
   | { status: "error"; message: string };
 
 function needsAccessGate(): boolean {
@@ -124,8 +133,11 @@ export async function POST(request: Request): Promise<NextResponse<TransitionRes
   // values, and the most-recent Agent Test Update still says "passed".
   // Buddy's queue uses those as fallback signals to surface a Ready bucket
   // — without resetting them, the reopened ticket stays in Ready for you.
-  // We do the resets best-effort: any failure logs but doesn't fail the
-  // transition (status flip already succeeded above).
+  // We do the resets best-effort (status flip already succeeded), but
+  // collect any failures so the response can flag them — silent prod
+  // log-and-forget is what caused the original "still says Ready"
+  // regression.
+  const partialFailures: string[] = [];
   if (action === "reopen") {
     try {
       await editJiraIssueFields(jiraConfig, issueKey, {
@@ -133,12 +145,9 @@ export async function POST(request: Request): Promise<NextResponse<TransitionRes
         customfield_10046: { value: "Failed" }, // Human Final Review
       });
     } catch (error) {
-      if (process.env.NODE_ENV !== "production") {
-        console.warn(
-          `[transition route] reopen field reset failed for ${issueKey}:`,
-          error instanceof Error ? error.message : "unknown error",
-        );
-      }
+      const message = error instanceof Error ? error.message : "unknown error";
+      console.warn(`[transition route] reopen field reset failed for ${issueKey}:`, message);
+      partialFailures.push(`Could not reset Loop Stage / Human Final Review: ${message}`);
     }
 
     // Post a second comment formatted as an Agent Test Update so
@@ -154,12 +163,9 @@ export async function POST(request: Request): Promise<NextResponse<TransitionRes
       });
       await postJiraComment(jiraConfig, issueKey, override);
     } catch (error) {
-      if (process.env.NODE_ENV !== "production") {
-        console.warn(
-          `[transition route] reopen ATU-override post failed for ${issueKey}:`,
-          error instanceof Error ? error.message : "unknown error",
-        );
-      }
+      const message = error instanceof Error ? error.message : "unknown error";
+      console.warn(`[transition route] reopen ATU-override post failed for ${issueKey}:`, message);
+      partialFailures.push(`Could not post the Agent Test Update override comment: ${message}`);
     }
   }
 
@@ -167,6 +173,7 @@ export async function POST(request: Request): Promise<NextResponse<TransitionRes
     status: "ready",
     action,
     verificationCommentId,
+    partialFailures: partialFailures.length ? partialFailures : undefined,
   });
 }
 
