@@ -1250,6 +1250,22 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                 </p>
               ) : null}
 
+              {/* Already-Done drift — ticket is marked Done in Jira but
+                  Human Final Review never got cleared past Ready/Failed.
+                  Hint at the drift so John doesn't waste time re-verifying
+                  a closed ticket without knowing it's closed. */}
+              {/^done$/i.test(data.status || "")
+                && !/passed/i.test(data.customFields.humanFinalReview || "") ? (
+                <p className="mb-4 flex items-start gap-2 rounded-xl border border-sky-300/35 bg-sky-300/10 px-4 py-3 text-sm leading-6 text-sky-100">
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                  <span>
+                    Jira already has this ticket as <span className="font-semibold">Done</span>, but Human Final Review is still{" "}
+                    <span className="font-semibold">{data.customFields.humanFinalReview || "Ready"}</span>.
+                    Either the field drifted after merge or someone closed the ticket early. No new test needed — flag PM if this looks wrong.
+                  </span>
+                </p>
+              ) : null}
+
               {/* Step-specific body. */}
               {currentStepIndex === 0 ? (
                 <div className="grid gap-4">

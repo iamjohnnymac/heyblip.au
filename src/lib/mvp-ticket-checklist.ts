@@ -127,7 +127,11 @@ const WORK_KIND_CONFIGS = [
   {
     id: "friendship",
     label: "Friendship",
-    match: /friend|friendship|request|accept|contact/i,
+    // Word-boundary anchored so we don't smear onto stray prose like
+    // "acceptance language" / "contact form" / "request body". Friendship
+    // tickets explicitly say "friend request", "accept friend", or use
+    // "friendship" as a topic word.
+    match: /\bfriend(?:ship)?s?\b|\bfriend[-\s]?request\b|\baccept(?:ed|ing)?\s+friend|\bfriend\s+accept|\bcontact[-\s]?sync/i,
     risk: "Friendship bugs often create asymmetric state, so both accounts need a clear before/after identity check.",
     acceptanceQuestions: [
       "Which direction is being tested: requester to recipient, recipient back to requester, or both?",
@@ -235,7 +239,9 @@ const WORK_KIND_CONFIGS = [
   {
     id: "nearby-ble",
     label: "Nearby/BLE",
-    match: /nearby|ble|bluetooth|mesh peer|peer count|advertis/i,
+    // Word-boundary anchors so "ble" doesn't smear onto stray words
+    // like "reachable", "available", or "table" in random prose.
+    match: /\bnearby\b|\bBLE\b|\bbluetooth\b|\bmesh\s+peer\b|\bpeer\s+count\b|\badvertis(?:e|ing|ement)\b/i,
     risk: "Nearby/BLE fixes need real-device proof because simulator can validate UI wiring but not radio behavior.",
     acceptanceQuestions: [
       "Is this raw mesh peer count, accepted-friend nearby count, identity matching, or stale-peer cleanup?",
@@ -258,6 +264,60 @@ const WORK_KIND_CONFIGS = [
       "Attach relaunch/background result when required.",
     ],
     outOfScope: ["message relay", "push notification routing", "UI polish unless it blocks the nearby proof"],
+  },
+  {
+    id: "relay-noise",
+    label: "Relay/Noise",
+    match: /\brelay\b|\bnoise\b|\bhandshake\b|\bsession\s+manager\b|\bencrypted\s+packet\b|\bmesh\b/i,
+    risk: "Relay/Noise fixes can pass in isolation but leave the handshake state machine stranded in production — every fix needs proof of session recovery, not just a happy-path send.",
+    acceptanceQuestions: [
+      "Which handshake/session state is being fixed: msg1/msg2/msg3 failure, responder stuck, simultaneous-init, or post-timeout recovery?",
+      "What user-visible symptom proves it: locked outgoing bubbles, empty DM screen, dropped encrypted packets, or stalled chat after relaunch?",
+      "Which sibling tickets (BDEV-413/479/487/489-family) are explicitly out of scope?",
+    ],
+    reproduceSteps: [
+      "Name both phones, accounts, and starting friend/session state.",
+      "Trigger the exact handshake failure path from the ticket (e.g. accept friend + immediate DM, or wifi toggle mid-handshake).",
+      "Record paired Noise logs from both sides showing the failing transition.",
+    ],
+    guardrails: [
+      "Do not broaden session-manager rewrites beyond the named handshake state.",
+      "Keep canonical NoisePeerID/session-routing behavior intact (BDEV-479 family).",
+      "Add focused regression coverage for the failing state transition where possible.",
+    ],
+    closeoutEvidence: [
+      "Two-phone TestFlight proof of the named flow on the verified build.",
+      "Paired Noise logs showing recovery (no stranded `Handshake timeout` / `responder waiting for msg3`).",
+      "Sentry watch on related groups (handshake/no-session/decryption) stays quiet on the verified build.",
+    ],
+    outOfScope: ["media (image/PTT) channel routing", "push delivery", "BLE peer discovery"],
+  },
+  {
+    id: "web-marketing",
+    label: "Marketing Site",
+    match: /\bheyblip\.au\b|\bmarketing\s+site\b|\bmarketing\s+copy\b|\bSEO\b|\bsitemap\b|\bweb(?:site)?\s+(?:copy|polish|content)\b|\bThree\.js\b|\blanding\s+page\b/i,
+    risk: "Marketing-site changes ship to a separate repo and audience — confusing them with iOS app work hides real bugs and risks shipping wrong copy.",
+    acceptanceQuestions: [
+      "Which specific page, copy block, or asset is being changed?",
+      "Does the change match the canonical source (App Store Connect IAP setup, security ground-truth in code, real pricing)?",
+      "Is this app-repo or site-repo work, and is the right reviewer routing in place?",
+    ],
+    reproduceSteps: [
+      "Open the affected page on the live site (or local preview) and capture the current copy/asset.",
+      "Compare against the canonical source named in acceptance.",
+      "Record before/after diff for the copy or asset that lands.",
+    ],
+    guardrails: [
+      "Keep the change scoped to the named page/section.",
+      "Do not touch iOS app code from a marketing-site PR.",
+      "Verify pricing/security claims map to real code paths or App Store setup.",
+    ],
+    closeoutEvidence: [
+      "Screenshot or deploy preview of the new copy/section.",
+      "Link the source of truth (App Store IAP, security code path, etc.).",
+      "Confirm SEO/meta or sitemap updates land where required.",
+    ],
+    outOfScope: ["iOS app code", "Auth/Relay/Push behavior", "Sentry/observability"],
   },
   {
     id: "observability",
@@ -474,7 +534,7 @@ export type HumanTestResultViewModel = {
 
 export type AgentTestUpdateViewModel = {
   found: boolean;
-  status: "passed" | "failed" | "not-run" | "unknown";
+  status: "passed" | "failed" | "inconclusive" | "not-run" | "unknown";
   label: string;
   buildOrCommit: string;
   humanVerificationNeeded: boolean | null;
@@ -1205,14 +1265,18 @@ function findWorkKindConfig(input: ChecklistInput, evidenceText: string) {
     : undefined;
   if (trackMatch) return trackMatch;
 
-  const searchText = [
-    input.summary,
-    input.descriptionText,
-    evidenceText,
-  ].join("\n");
+  // Summary-regex matching is a fallback for tickets that have NOT yet had
+  // an MVP Track set. When MVP Track *is* set but didn't match a config
+  // above, prefer the labelled general recipe over a loose summary match —
+  // otherwise a Relay/Noise or Web-marketing ticket can latch onto
+  // Friendship/Auth because the description mentions a friend graph or a
+  // token. The MVP Track field is John's authoritative routing; trust it.
+  const searchText = input.customFields.mvpTrack
+    ? ""
+    : [input.summary, input.descriptionText, evidenceText].join("\n");
 
   return (
-    WORK_KIND_CONFIGS.find((config) => config.match.test(searchText)) || {
+    (searchText && WORK_KIND_CONFIGS.find((config) => config.match.test(searchText))) || {
       id: "general",
       label: input.customFields.mvpTrack || "General Stabilization",
       risk: "This ticket still needs a narrow acceptance lock so the agent does not drift into adjacent fixes.",
@@ -1959,7 +2023,7 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   const statusText = readLabeledValue(statusComment.text, "Agent testing");
   const status = parseAgentStatus(statusText);
   const humanNeededText = readLabeledValue(comment.text, "Human verification needed");
-  const humanVerificationNeeded = humanNeededText
+  let humanVerificationNeeded: boolean | null = humanNeededText
     ? /yes|required|true/i.test(humanNeededText)
       ? true
       : /no|false|not required/i.test(humanNeededText)
@@ -1970,11 +2034,23 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   // Known sibling headings that can follow "Human test requested" without a
   // colon — we stop at any of them so the panel doesn't absorb the Evidence
   // bullets or the Dashboard fields.
-  const humanTestLines = readBlockLines(comment.text, "Human test requested", [
-    "Evidence",
-    "Dashboard fields to update",
-    "Dashboard fields",
-  ]);
+  const humanTestLines = readBlockLines(
+    comment.text,
+    "Human test requested",
+    ["Evidence", "Dashboard fields to update", "Dashboard fields"],
+    // Keep the "- " bullet prefix so parseHumanTestRequested can auto-
+    // number bulletList-shape HTRs. Without this the bullets get
+    // stripped before the parser ever sees them.
+    { preserveBullets: true },
+  );
+  // When the agent rewrites drop the "Human verification needed:" label
+  // but still include a Human test requested block, infer "yes" — every
+  // ATU that asks for a human test is by definition asking for human
+  // verification. Without this the panel renders "Human verification:
+  // unknown" even though the AI literally wrote out the steps.
+  if (humanVerificationNeeded === null && humanTestLines.length > 0) {
+    humanVerificationNeeded = true;
+  }
   const { items: humanTestRequestedItems, preamble: humanTestRequestedPreamble } =
     parseHumanTestRequested(humanTestLines);
   const humanTestRequested = humanTestLines.join(" ");
@@ -1996,7 +2072,16 @@ function extractAgentTestUpdate(comments: JiraComment[]): AgentTestUpdateViewMod
   return {
     found: true,
     status,
-    label: status === "passed" ? "Agent checks passed" : status === "failed" ? "Agent checks failed" : "Agent update found",
+    label:
+      status === "passed"
+        ? "Agent checks passed"
+        : status === "failed"
+          ? "Agent checks failed"
+          : status === "inconclusive"
+            ? "Agent inconclusive — needs more info"
+            : status === "not-run"
+              ? "Agent didn't run yet"
+              : "Agent update found",
     buildOrCommit,
     humanVerificationNeeded,
     humanTestRequested,
@@ -2091,24 +2176,51 @@ function parseHumanTestRequested(lines: string[]): {
 } {
   if (!lines.length) return { items: [], preamble: "" };
 
-  const numbered: { number: number; raw: string }[] = [];
+  // Some ATU comments use a numbered list ("1. Install build…"), others
+  // use an ADF bulletList that adfToPlainText emits as "- Install build…".
+  // Treat both as ordered steps so the inline Step 1 panel always renders.
+  // When the AI mixes the two we keep numbered items as the source of
+  // truth and turn bullets into continuations; when there are no numbered
+  // lines at all we auto-number the bullets in encountered order.
+  const items: { number: number; raw: string }[] = [];
   const preambleLines: string[] = [];
+  let nextAutoNumber = 1;
+  let lastWasNumbered = false;
+
+  function addItem(raw: string, explicitNumber: number | null) {
+    const num = explicitNumber ?? nextAutoNumber;
+    items.push({ number: num, raw: raw.trim() });
+    nextAutoNumber = num + 1;
+    lastWasNumbered = explicitNumber !== null;
+  }
 
   for (const line of lines) {
-    const match = line.match(/^(\d+)\.\s+(.+)$/);
-    if (match) {
-      numbered.push({ number: Number(match[1]), raw: match[2].trim() });
-    } else if (numbered.length === 0) {
+    const numbered = line.match(/^(\d+)\.\s+(.+)$/);
+    if (numbered) {
+      addItem(numbered[2], Number(numbered[1]));
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      if (lastWasNumbered) {
+        // Treat as a sub-bullet/continuation of the previous numbered
+        // step rather than re-numbering mid-list.
+        items[items.length - 1].raw = `${items[items.length - 1].raw} ${bullet[1]}`.trim();
+      } else {
+        addItem(bullet[1], null);
+      }
+      continue;
+    }
+    if (items.length === 0) {
       preambleLines.push(line);
     } else {
-      // A continuation paragraph for the previous numbered item.
-      const last = numbered[numbered.length - 1];
-      last.raw = `${last.raw} ${line}`.trim();
+      // Continuation paragraph for the previous item.
+      items[items.length - 1].raw = `${items[items.length - 1].raw} ${line}`.trim();
     }
   }
 
-  const items = numbered.map(({ number, raw }) => buildHumanTestRequestedItem(number, raw));
-  return { items, preamble: preambleLines.join(" ").trim() };
+  const built = items.map(({ number, raw }) => buildHumanTestRequestedItem(number, raw));
+  return { items: built, preamble: preambleLines.join(" ").trim() };
 }
 
 function buildHumanTestRequestedItem(num: number, raw: string): HumanTestRequestedItem {
@@ -2205,8 +2317,14 @@ function extractSentryIds(text: string): string[] {
 }
 
 function parseAgentStatus(value: string): AgentTestUpdateViewModel["status"] {
-  if (/pass/i.test(value)) return "passed";
+  // Order matters: check "fail" before "pass" so phrases like
+  // "Passed for foo, but Failed for bar" land on the more conservative
+  // failed bucket. "Inconclusive" / "not ready" / "blocked" map to a
+  // distinct state so the UI can show "needs more info" instead of an
+  // ambiguous "Agent update found".
+  if (/inconclusive|cannot verify|not ready|blocked\b|deferred|not\s+enough/i.test(value)) return "inconclusive";
   if (/fail/i.test(value)) return "failed";
+  if (/pass/i.test(value)) return "passed";
   if (/not run|not-run|pending/i.test(value)) return "not-run";
   return "unknown";
 }
@@ -2236,6 +2354,7 @@ function readBlockLines(
   text: string,
   label: string,
   stopAtHeadings: string[] = [],
+  options: { preserveBullets?: boolean } = {},
 ): string[] {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const lines = text.split(/\r?\n/);
@@ -2258,23 +2377,30 @@ function readBlockLines(
     if (start === -1) return [];
   }
 
+  const stripBullet = (value: string) =>
+    options.preserveBullets ? value : value.replace(/^\s*[-*]\s*/, "");
+
   const collected: string[] = [];
   if (isLabeled) {
     const sameLine = lines[start]?.split(":").slice(1).join(":").trim();
-    if (sameLine) collected.push(sameLine.replace(/^\s*[-*]\s*/, ""));
+    if (sameLine) collected.push(stripBullet(sameLine));
   }
 
   for (let index = start + 1; index < lines.length; index += 1) {
     const line = lines[index] || "";
-    // Stop when a new labeled section starts.
-    if (/^\s*[-*]?\s*[A-Za-z][A-Za-z /-]{2,}\s*:/.test(line) && collected.length) break;
+    // Stop when a new labeled section starts. Don't trip on a bulleted
+    // line whose body happens to contain a colon ("- Phone A: locked"),
+    // so require the colon to land within the first label-like token.
+    if (
+      /^\s*(?:[A-Za-z][A-Za-z /-]{2,})\s*:/.test(line) && collected.length
+    ) break;
     // Stop when we hit a known sibling heading (e.g. "Evidence" follows
     // "Human test requested"). Bare headings have no colon so the
     // labeled-section stop above can't catch them on its own.
     if (collected.length && stopHeadingRegexes.some((re) => re.test(line))) break;
     const trimmed = line.trim();
     if (trimmed) {
-      collected.push(trimmed.replace(/^\s*[-*]\s*/, ""));
+      collected.push(stripBullet(trimmed));
     }
   }
 

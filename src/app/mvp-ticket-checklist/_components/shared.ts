@@ -56,6 +56,24 @@ export function buildProofSha(raw: string): string {
 
 export function shortBuildOrCommitChip(raw: string): { label: string; full: string } | null {
   if (!raw) return null;
+  // Diagnostic-only commit markers ("production dpl_...; no BDEV-252
+  // implementation commit found", "PR #391 (failing)", "pending", "TBD")
+  // shouldn't claim "Fix is in" — surface them as a neutral "no fix
+  // landed yet" chip so the user doesn't think a real commit handoff
+  // exists.
+  if (/\bno\b.*\bcommit\s+found\b|\bnot found\b|\bnone\s+yet\b|^pending$|^tbd$/i.test(raw.trim())) {
+    return { label: "No fix landed yet", full: raw };
+  }
+  if (/\bfailing\b|\bfailed\b|\bbroken\b/i.test(raw) && !/\bno\b/i.test(raw)) {
+    // PR/commit named but flagged as failing — soften the chip so the
+    // panel doesn't celebrate a broken handoff.
+    const prMatch = raw.match(/pull\/(\d+)|PR\s*#?(\d+)/i);
+    const prNum = prMatch ? prMatch[1] || prMatch[2] : "";
+    return {
+      label: prNum ? `PR #${prNum} (failing)` : "Build/commit named but failing",
+      full: raw,
+    };
+  }
   const buildMatch = raw.match(/\bbuild\s+(\d+[a-z]?)\b/i);
   if (buildMatch) {
     return { label: `Fix is in: build ${buildMatch[1]}`, full: raw };

@@ -688,3 +688,138 @@ test("extractTestExpectations is case-insensitive and trims trailing punctuation
   assert.equal(result.passIf, "the banner shows");
   assert.equal(result.failIf, "no banner");
 });
+
+test("MVP Track Relay/Noise lands on the Relay/Noise recipe even when the description mentions a friend graph", () => {
+  // BDEV-477 / BDEV-489-family: track is Relay/Noise but the description
+  // talks about "friend accept" because that's the failing user flow.
+  // Without the track-wins fix this latched onto the Friendship recipe.
+  const viewModel = buildChecklistViewModel({
+    issueKey: "BDEV-489",
+    summary: "First DM after friend accept can deadlock: responder waits for missing msg3",
+    status: "Verifying",
+    descriptionText: "Friend accept then first DM never lands — responder stuck waiting for msg3.",
+    customFields: {
+      mvpTrack: "Relay/Noise",
+      loopStage: "Human Verifying",
+      verificationSurface: "Automated, Two Phones, Sentry Watch",
+      humanFinalReview: "Ready",
+      verifiedBuildOrCommit: "main@5a1c2e1",
+    },
+    comments: [],
+    links: [],
+    issueUrl: "https://heyblip.atlassian.net/browse/BDEV-489",
+  });
+
+  assert.equal(viewModel.workRecipe.kind, "Relay/Noise");
+  // None of the friendship-only language should leak into the
+  // acceptance questions.
+  const acceptanceText = viewModel.workRecipe.acceptanceQuestions.join(" ");
+  assert.ok(/handshake|msg1|msg2|msg3|session/i.test(acceptanceText));
+});
+
+test("Web/marketing tickets without an MVP Track stop matching Friendship via 'contact form'", () => {
+  // BDEV-251 has no MVP Track and mentions "Security section" + "Pricing
+  // copy" + "Imported from HEY-1147" — the old Friendship regex matched
+  // "contact" inside "contact form" / similar incidental words.
+  const viewModel = buildChecklistViewModel({
+    issueKey: "BDEV-251",
+    summary: "[WEB] Fix false claims in Security section + Pricing copy",
+    status: "In Progress",
+    descriptionText:
+      "Two areas of marketing copy on heyblip.au need correcting before launch. Security section, pricing copy and the SEO meta tags.",
+    customFields: {
+      mvpTrack: "",
+      loopStage: "Agent Coding",
+      verificationSurface: "Automated",
+      humanFinalReview: "",
+      verifiedBuildOrCommit: "",
+    },
+    comments: [],
+    links: [],
+    issueUrl: "https://heyblip.atlassian.net/browse/BDEV-251",
+  });
+
+  // Either Marketing Site (preferred) or General Stabilization — anything
+  // but Friendship.
+  assert.notEqual(viewModel.workRecipe.kind, "Friendship");
+});
+
+test("parses a bulletList Human test requested block so the panel still renders items", () => {
+  // adfToPlainText emits "- " for ADF bulletList items; without the
+  // bullet-aware parser the Step 1 panel rendered an empty list.
+  const viewModel = buildChecklistViewModel({
+    issueKey: "BDEV-353",
+    summary: "Noise handshake recovery",
+    status: "Verifying",
+    descriptionText: "Acceptance.",
+    customFields: {
+      mvpTrack: "Relay/Noise",
+      loopStage: "Human Verifying",
+      verificationSurface: "Automated, Two Phones, Sentry Watch",
+      humanFinalReview: "Ready",
+      verifiedBuildOrCommit: "main@abc1234",
+    },
+    comments: [
+      {
+        id: "1",
+        author: "Agent",
+        created: "2026-05-10T01:00:00.000+0000",
+        text: [
+          "BDEV-353 agent test update",
+          "Agent testing: Passed",
+          "Automated: Passed",
+          "Simulator: Passed",
+          "Worker smoke: Passed",
+          "Build/commit: main@abc1234",
+          "Human test requested:",
+          "- Install the TestFlight build that contains main@abc1234.",
+          "- Phone A and Phone B sign in to different accounts.",
+          "- Phone A sends a DM to Phone B.",
+        ].join("\n"),
+      },
+    ],
+    links: [],
+    issueUrl: "https://heyblip.atlassian.net/browse/BDEV-353",
+  });
+
+  const items = viewModel.humanTestPlan.agentUpdate.humanTestRequestedItems;
+  assert.equal(items.length, 3, "should render all three bullet items as numbered steps");
+  assert.equal(items[0].number, 1);
+  assert.equal(items[1].number, 2);
+  assert.equal(items[2].number, 3);
+  // Auto-inferred from HTR-present.
+  assert.equal(viewModel.humanTestPlan.agentUpdate.humanVerificationNeeded, true);
+});
+
+test("agent status maps 'inconclusive' / 'cannot verify' prose to the inconclusive bucket", () => {
+  const viewModel = buildChecklistViewModel({
+    issueKey: "BDEV-477",
+    summary: "Need more info",
+    status: "In Progress",
+    descriptionText: "Acceptance.",
+    customFields: {
+      mvpTrack: "Relay/Noise",
+      loopStage: "Failed/Reopened",
+      verificationSurface: "Two Phones",
+      humanFinalReview: "Not Ready",
+      verifiedBuildOrCommit: "",
+    },
+    comments: [
+      {
+        id: "1",
+        author: "Agent",
+        created: "2026-05-10T01:00:00.000+0000",
+        text: [
+          "BDEV-477 agent test update",
+          "Agent testing: Inconclusive — cannot verify without TestFlight access.",
+          "Build/commit: pending",
+        ].join("\n"),
+      },
+    ],
+    links: [],
+    issueUrl: "https://heyblip.atlassian.net/browse/BDEV-477",
+  });
+
+  assert.equal(viewModel.humanTestPlan.agentUpdate.status, "inconclusive");
+  assert.ok(/inconclusive/i.test(viewModel.humanTestPlan.agentUpdate.label));
+});
