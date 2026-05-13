@@ -26,6 +26,7 @@ In chronological order on `improvements/test-buddy-clarity-and-coach-tighten`:
 | `67e8819` | Sonnet vision | Findings route fetches image attachments server-side (Jira auth, parallel, 6s per-image timeout), base64-inlines them into the Sonnet call as `image_url` content. Sonnet's system prompt updated to lead with image evidence over typed findings. Bumped FINDINGS_TIMEOUT_MS 15s → 45s; client overall 30s → 60s |
 | `fab4362` | Reopen field reset | Tapping Reopen for fix now resets `Loop Stage = Failed/Reopened`, `Human Final Review = Failed`, and posts a new Agent Test Update comment with `Agent testing: failed` so all four `isReady()` conditions clear and the ticket actually drops out of Ready bucket |
 | `bf28982` | Three follow-ups | Send-to-Codex prompt now includes latest Human Test Result + Sonnet verdict + concerns inline; Ask Buddy coach receives `latestHumanTestResult` field and is told to lead with what to change instead of generic step intros after a fail/inconclusive; new shared lib `src/lib/sentry-events.ts` + `/api/.../sentry-events` route + auto-inject of live Sentry counts into findings evidence (so Sonnet sees whether watched alerts dropped) |
+| `efca913` | Verdict reflects immediately | Findings route now writes `HFR=Failed` + posts ATU override `Agent testing: failed/inconclusive` *as soon as Sonnet returns the verdict*, without waiting for the user to tap Reopen. Queue logic also updated — `isReady()` hard-bails on `HFR=Failed` even if status is still Verifying, and `isInProgress()` catches `status=Verifying + HFR=Failed` so the ticket doesn't disappear |
 
 Tests went from 23 → 47 in this stretch. All green. tsc + lint + build
 clean across every commit.
@@ -124,10 +125,18 @@ If you change Buddy's queue `isReady()` logic, remember that **Reopen
 for fix must result in all four conditions returning false**. Today
 they are:
 
+0. (hard bail) `humanFinalReview === "failed"`
 1. `status === "verifying"`
 2. `humanFinalReview === "ready"`
 3. `loopStage` matches `verifying|in build|ci green`
 4. `status === "in progress"` AND `agentTestUpdateStatus === "passed"`
+
+The condition-0 bail means a fail/inconclusive verdict on Submit
+findings is enough to drop a ticket out of Ready *immediately* —
+without the user clicking Reopen. The Reopen path on top of that
+still resets fields 2 + 3 + 4 explicitly so the ticket stays out
+of Ready when the bail doesn't apply (e.g. if the human later
+overrides HFR back to Ready and tries again).
 
 The transition route's reopen path (`src/app/api/mvp-ticket-checklist/transition/route.ts`)
 resets each of these explicitly:
