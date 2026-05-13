@@ -27,9 +27,9 @@ type CoachResponse = {
   stopIf: string[];
 };
 
-type CoachSource = "kimi-sanitized" | "fallback";
+type CoachSource = "haiku" | "fallback";
 
-const KIMI_COACH_TIMEOUT_MS = 15000;
+const HAIKU_COACH_TIMEOUT_MS = 15000;
 
 function createTimeoutSignal(timeoutMs: number): AbortSignal {
   const controller = new AbortController();
@@ -37,7 +37,7 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal {
   return controller.signal;
 }
 
-type SanitizedCoachInput = {
+type CoachInput = {
   ticketType: string;
   jiraStatus: string;
   mvpTrack: string;
@@ -87,7 +87,7 @@ type SanitizedCoachInput = {
     guardrails: string[];
     outOfScope: string[];
   };
-  sanitizedIssueExcerpt: string;
+  issueExcerpt: string;
 };
 
 function needsAccessGate(): boolean {
@@ -128,12 +128,12 @@ export async function POST(request: Request) {
 
   if (openRouterApiKey) {
     try {
-      const coach = await buildKimiSanitizedCoach(checklist.data, fallback, openRouterApiKey, payload.currentStepIndex);
-      return NextResponse.json({ status: "ready", source: "kimi-sanitized" satisfies CoachSource, coach });
+      const coach = await buildHaikuCoach(checklist.data, fallback, openRouterApiKey, payload.currentStepIndex);
+      return NextResponse.json({ status: "ready", source: "haiku" satisfies CoachSource, coach });
     } catch (error) {
       if (process.env.NODE_ENV !== "production") {
         console.warn(
-          "Kimi sanitized coach failed:",
+          "Haiku coach failed:",
           error instanceof Error ? error.message : "Unknown error",
         );
       }
@@ -153,7 +153,7 @@ export async function POST(request: Request) {
   });
 }
 
-function buildSanitizedCoachInput(data: ChecklistViewModel, fallback: CoachResponse, currentStepIndex?: number): SanitizedCoachInput {
+function buildCoachInput(data: ChecklistViewModel, fallback: CoachResponse, currentStepIndex?: number): CoachInput {
   const safeCurrentStepIndex = Math.min(Math.max(currentStepIndex ?? 0, 0), Math.max(fallback.johnTaySteps.length - 1, 0));
   const currentStep = fallback.johnTaySteps[safeCurrentStepIndex] || fallback.johnTaySteps[0] || { label: "Next", detail: fallback.nextMove };
   const sourceHumanStep = data.humanTestPlan.steps[safeCurrentStepIndex];
@@ -190,57 +190,43 @@ function buildSanitizedCoachInput(data: ChecklistViewModel, fallback: CoachRespo
       fail: sourceHumanStep?.failMeans || "The step is missing, unclear, or still failing.",
     },
     generatedHumanSteps: data.humanTestPlan.steps.map((step) => ({
-      title: sanitizeExcerpt(step.title, 100),
+      title: truncateExcerpt(step.title, 100),
       owner: step.owner,
-      surface: sanitizeExcerpt(step.surface, 80),
-      doThis: sanitizeExcerpt(step.doThis, 220),
-      passMeans: sanitizeExcerpt(step.passMeans, 180),
-      failMeans: sanitizeExcerpt(step.failMeans, 180),
+      surface: truncateExcerpt(step.surface, 80),
+      doThis: truncateExcerpt(step.doThis, 220),
+      passMeans: truncateExcerpt(step.passMeans, 180),
+      failMeans: truncateExcerpt(step.failMeans, 180),
     })),
     generatedProofRequirements: data.proofRecipe.requirements.map((requirement) => ({
-      label: sanitizeExcerpt(requirement.label, 120),
-      surface: sanitizeExcerpt(requirement.surface, 80),
-      requiredBecause: sanitizeExcerpt(requirement.requiredBecause, 180),
+      label: truncateExcerpt(requirement.label, 120),
+      surface: truncateExcerpt(requirement.surface, 80),
+      requiredBecause: truncateExcerpt(requirement.requiredBecause, 180),
       hasConcreteProof: requirement.hasConcreteProof,
-      detail: sanitizeExcerpt(requirement.detail, 220),
-      tickWhen: sanitizeExcerpt(requirement.tickWhen, 180),
+      detail: truncateExcerpt(requirement.detail, 220),
+      tickWhen: truncateExcerpt(requirement.tickWhen, 180),
     })),
     generatedWorkRecipe: {
-      risk: sanitizeExcerpt(data.workRecipe.risk, 220),
-      testingPosture: sanitizeExcerpt(data.workRecipe.testingPosture, 220),
-      acceptanceQuestions: data.workRecipe.acceptanceQuestions.map((item) => sanitizeExcerpt(item, 160)),
-      reproduceSteps: data.workRecipe.reproduceSteps.map((item) => sanitizeExcerpt(item, 160)),
-      guardrails: data.workRecipe.guardrails.map((item) => sanitizeExcerpt(item, 160)),
-      outOfScope: data.workRecipe.outOfScope.map((item) => sanitizeExcerpt(item, 100)),
+      risk: truncateExcerpt(data.workRecipe.risk, 220),
+      testingPosture: truncateExcerpt(data.workRecipe.testingPosture, 220),
+      acceptanceQuestions: data.workRecipe.acceptanceQuestions.map((item) => truncateExcerpt(item, 160)),
+      reproduceSteps: data.workRecipe.reproduceSteps.map((item) => truncateExcerpt(item, 160)),
+      guardrails: data.workRecipe.guardrails.map((item) => truncateExcerpt(item, 160)),
+      outOfScope: data.workRecipe.outOfScope.map((item) => truncateExcerpt(item, 100)),
     },
-    sanitizedIssueExcerpt: sanitizeExcerpt(`${data.summary}\n${data.descriptionText}`, 700),
+    issueExcerpt: truncateExcerpt(`${data.summary}\n${data.descriptionText}`, 700),
   };
 }
 
-function sanitizeExcerpt(value: string, maxLength: number): string {
-  const cleaned = value
-    .replace(/https?:\/\/\S+/gi, "[link]")
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
-    .replace(/\b[A-F0-9]{16,}\b/gi, "[id]")
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]")
-    .replace(/\b(sk|pk|rk|ghp|xox[baprs])-[-_a-z0-9]{12,}\b/gi, "[secret]")
-    .replace(/\b[A-Z]+-\d+\b/g, "[ticket]")
-    .replace(/\bbuild\s*#?\s*\d+\b/gi, "build [number]")
-    .replace(/\b[0-9a-f]{7,40}\b/gi, "[hash]")
-    .split("\n")
-    .filter((line) => !/^\s*(at\s+\S+|\d{2}:\d{2}:\d{2}|traceback|stack trace|error:.*\/)/i.test(line))
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (cleaned.length <= maxLength) return cleaned;
-  return `${cleaned.slice(0, maxLength - 3).trim()}...`;
+function truncateExcerpt(value: string, maxLength: number): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxLength) return collapsed;
+  return `${collapsed.slice(0, maxLength - 3).trim()}...`;
 }
 
 function buildCoachInstructions(): string {
   return [
     "You are a calm helper inside Blip Test Buddy, a tool used by John and Tay to verify HeyBlip bug fixes.",
-    "You receive sanitized ticket state only. Do not ask for raw Jira text.",
+    "You receive ticket state, including raw URLs, IDs, build numbers, and stack-trace excerpts — use them faithfully when relevant.",
     "Talk to John and Tay like a friendly studio manager — clear, direct, no jargon.",
     "",
     "VOCABULARY — strict rules. The reader is not a developer.",
@@ -253,7 +239,7 @@ function buildCoachInstructions(): string {
     "STYLE rules.",
     "- Keep it short: nextMove is one sentence. Max 4 John/Tay steps, each under 18 words.",
     "- Sentences start with a verb in the imperative when telling the user what to do.",
-    "- Do not invent facts. Use only the sanitized data provided.",
+    "- Do not invent facts. Use only the data provided.",
     "",
     "JSON format.",
     "- Return valid JSON only. Do not wrap it in markdown.",
@@ -262,8 +248,8 @@ function buildCoachInstructions(): string {
   ].join("\n");
 }
 
-// Post-process Kimi output to scrub any jargon that leaks past the system prompt.
-// Belt-and-braces: the prompt forbids these terms but Kimi sometimes regresses.
+// Post-process Haiku output to scrub any jargon that leaks past the system prompt.
+// Belt-and-braces: the prompt forbids these terms but the model sometimes regresses.
 function scrubJargon(text: string): string {
   if (!text) return text;
   return text
@@ -283,7 +269,7 @@ function scrubJargon(text: string): string {
     .trim();
 }
 
-async function buildKimiSanitizedCoach(
+async function buildHaikuCoach(
   data: ChecklistViewModel,
   fallback: CoachResponse,
   apiKey: string,
@@ -291,7 +277,7 @@ async function buildKimiSanitizedCoach(
 ): Promise<CoachResponse> {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    signal: createTimeoutSignal(KIMI_COACH_TIMEOUT_MS),
+    signal: createTimeoutSignal(HAIKU_COACH_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -306,19 +292,19 @@ async function buildKimiSanitizedCoach(
       plugins: [{ id: "response-healing" }],
       messages: [
         { role: "system", content: buildCoachInstructions() },
-        { role: "user", content: JSON.stringify(buildSanitizedCoachInput(data, fallback, currentStepIndex)) },
+        { role: "user", content: JSON.stringify(buildCoachInput(data, fallback, currentStepIndex)) },
       ],
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Kimi sanitized coach returned ${response.status}.`);
+    throw new Error(`Haiku coach returned ${response.status}.`);
   }
 
   const body = (await response.json()) as { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }> };
   const text = extractOpenRouterText(body);
   if (!text) {
-    throw new Error("Kimi sanitized coach returned no text.");
+    throw new Error("Haiku coach returned no text.");
   }
 
   const parsed = parseCoachJson(extractJsonObject(text), text);
@@ -368,7 +354,7 @@ function parseCoachJson(value: string, originalText: string): CoachResponse {
     } catch (secondError) {
       if (process.env.NODE_ENV !== "production") {
         console.warn(
-          "Kimi JSON parse failed:",
+          "Haiku JSON parse failed:",
           firstError instanceof Error ? firstError.message : "Unknown error",
           secondError instanceof Error ? secondError.message : "Unknown repair error",
           originalText.slice(0, 220).replace(/\s+/g, " "),

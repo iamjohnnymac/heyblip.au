@@ -70,7 +70,7 @@ type CoachPayload = {
 type CoachState =
   | { status: "idle" }
   | { status: "loading"; stepIndex: number }
-  | { status: "ready"; source: "kimi-sanitized" | "fallback"; message?: string; coach: CoachPayload; stepIndex: number }
+  | { status: "ready"; source: "haiku" | "fallback"; message?: string; coach: CoachPayload; stepIndex: number }
   | { status: "error"; message: string };
 
 type StudentTestStep = {
@@ -1361,8 +1361,8 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
       ? coachState.coach.nextMove
       : buildMascotFallbackSpeech(currentStep, humanTestPlan, buildOrCommit);
   const mascotSourceLabel =
-    coachMatchesCurrentStep && coachState.source === "kimi-sanitized"
-      ? "Kimi sanitized"
+    coachMatchesCurrentStep && coachState.source === "haiku"
+      ? "Haiku"
       : coachState.status === "loading" && coachState.stepIndex === currentStepIndex
         ? "Thinking"
         : "Local guide";
@@ -1405,7 +1405,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
       });
 
       const body = (await response.json()) as
-        | { status: "ready"; source: "kimi-sanitized" | "fallback"; message?: string; coach: CoachPayload }
+        | { status: "ready"; source: "haiku" | "fallback"; message?: string; coach: CoachPayload }
         | { status: "error"; message: string };
 
       if (!response.ok || body.status !== "ready") {
