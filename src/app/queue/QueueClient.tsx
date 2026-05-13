@@ -131,6 +131,8 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
   const [state, setState] = useState<FetchState>({ status: "idle" });
   const [filter, setFilter] = useState<FilterKey>("all");
   const [isRefreshing, startRefresh] = useTransition();
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const buildUrl = useCallback(() => {
     const qs = new URLSearchParams({ limit: "all" });
@@ -150,6 +152,7 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
         }
         const rows = Array.isArray(body.rows) ? (body.rows as QueueRowView[]) : [];
         setState({ status: "ready", rows });
+        setLastFetchedAt(Date.now());
       } catch (error) {
         setState({
           status: "error",
@@ -174,6 +177,14 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
       cancelled = true;
     };
   }, [load]);
+
+  // 1s wall-clock tick so the "Updated Xs ago" label in the header rolls
+  // forward smoothly. Stays separate from the 30s data poll so the timer
+  // visibly counts up between fetches.
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 30s polling — mirrors MvpTicketChecklistClient. Skip polling when the
   // tab is hidden so we don't quietly hammer Jira when nobody's looking.
@@ -256,6 +267,7 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
         readyCount={counts.ready}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
+        freshnessLabel={freshnessLabel(lastFetchedAt, now)}
       />
 
       {state.status === "loading" ? <LoadingSkeleton /> : null}
@@ -325,11 +337,13 @@ function Header({
   readyCount,
   onRefresh,
   isRefreshing,
+  freshnessLabel,
 }: {
   total: number;
   readyCount: number;
   onRefresh: () => void;
   isRefreshing: boolean;
+  freshnessLabel: string;
 }) {
   return (
     <header className="mb-7 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -343,6 +357,18 @@ function Header({
             {total} {total === 1 ? "ticket" : "tickets"} across testing
             <span className="mx-1.5">·</span>
             {readyCount} ready for you
+            {freshnessLabel ? (
+              <>
+                <span className="mx-1.5">·</span>
+                <span className="inline-flex items-center gap-1 text-[var(--muted)]">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  </span>
+                  {freshnessLabel}
+                </span>
+              </>
+            ) : null}
           </p>
         </div>
       </div>
@@ -358,6 +384,18 @@ function Header({
       </button>
     </header>
   );
+}
+
+// Plain-English "Updated Xs ago" label for the queue header. Live ticks so
+// the user can see how stale the data is between the 30s polls. Returns ""
+// when we haven't fetched yet (don't show a misleading "0s ago").
+function freshnessLabel(fetchedAt: number | null, now: number): string {
+  if (!fetchedAt) return "";
+  const seconds = Math.max(0, Math.floor((now - fetchedAt) / 1000));
+  if (seconds < 5) return "Updated just now";
+  if (seconds < 60) return `Updated ${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes === 1 ? "Updated 1m ago" : `Updated ${minutes}m ago`;
 }
 
 // ── Top pick banner ──────────────────────────────────────────────────

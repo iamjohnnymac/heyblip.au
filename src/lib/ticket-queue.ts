@@ -113,7 +113,15 @@ function asString(value: unknown): string {
 }
 
 function asNamed(value: unknown): string {
-  if (!value || typeof value !== "object") return "";
+  if (!value) return "";
+  // Multi-select Jira fields (Verification Surface, etc.) arrive as arrays
+  // of {name|value} option objects. Join their display strings so we end up
+  // with a single comma-separated label the rest of the queue can parse.
+  // The detail-page side does the equivalent via fieldToText.
+  if (Array.isArray(value)) {
+    return value.map(asNamed).filter(Boolean).join(", ");
+  }
+  if (typeof value !== "object") return "";
   const record = value as Record<string, unknown>;
   return asString(record.name) || asString(record.value) || "";
 }

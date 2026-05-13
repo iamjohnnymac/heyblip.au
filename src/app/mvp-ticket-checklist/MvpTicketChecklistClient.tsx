@@ -38,6 +38,8 @@ import { AskBuddyInline } from "./_components/AskBuddyInline";
 import { ErrorPanel } from "./_components/ErrorPanel";
 import { CopyButton, DisclosurePanel, InlineMarkdown, IssueLinkRow } from "./_components/SmallComponents";
 import {
+  buildInstallLabel,
+  buildProofSha,
   decodeHtmlEntities,
   humaniseTimestamps,
   openClaude,
@@ -398,7 +400,12 @@ function buildStudentTestSteps(data: ChecklistViewModel): StudentTestStep[] {
     {
       title: buildOrCommit ? "Install the right build" : "Wait for the new TestFlight build",
       body: buildOrCommit
-        ? `Open TestFlight on your phone, find HeyBlip Beta, and install the latest build. Look for build ${buildOrCommit} (or the highest build number) — older builds don't have the fix.`
+        ? (() => {
+            const installLabel = buildInstallLabel(buildOrCommit);
+            const proof = buildProofSha(buildOrCommit);
+            const proofTail = proof ? ` (merge proof: \`${proof}\`)` : "";
+            return `Open TestFlight on your phone, find HeyBlip Beta, and install ${installLabel}${proofTail}. If TestFlight shows a higher build number, install that instead — older builds don't have the fix.`;
+          })()
         : "The fix needs a TestFlight build before you can test it. Either: (1) wait for the PR to merge — CI cuts a new TestFlight build automatically (5-15 mins), or (2) ask the AI to trigger a build for the PR branch directly. Once a build is named in Jira, this card turns green.",
       pass: "TestFlight has a new HeyBlip Beta build and you've installed it.",
       fail: "No new build in TestFlight yet, or you're still on an older one.",

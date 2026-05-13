@@ -31,6 +31,29 @@ export function plainRelativeTime(iso: string | undefined): string {
 // the AI writes to a single short token suitable for a chip — "build 65" or
 // "commit e027d3e". Falls back to the raw value (truncated) when nothing
 // concrete jumps out.
+// User-facing "what to install" line. Extracts just the build number so
+// the Step 2 body reads "Look for build 65" instead of "Look for build
+// build 65 / 5a1c2e1a83e9463550652b10f1035f8334a17c92". When no build
+// number is parseable, falls back to "the latest TestFlight build" so the
+// instruction still makes sense without dumping a raw SHA at the reader.
+export function buildInstallLabel(raw: string): string {
+  if (!raw) return "the latest TestFlight build";
+  const buildMatch = raw.match(/\bbuild\s+(\d+[a-z]?)\b/i);
+  if (buildMatch) return `build ${buildMatch[1]}`;
+  return "the latest TestFlight build";
+}
+
+// Short proof token — just the SHA short form. Returns "" when no commit
+// is parseable. Used as secondary muted text next to the install label.
+export function buildProofSha(raw: string): string {
+  if (!raw) return "";
+  const shaMatch = raw.match(/(?:\s|`|^|@|\/)([0-9a-f]{7,40})(?:\s|`|$)/i);
+  if (shaMatch && !/^BDEV-/i.test(shaMatch[1])) {
+    return shaMatch[1].slice(0, 7);
+  }
+  return "";
+}
+
 export function shortBuildOrCommitChip(raw: string): { label: string; full: string } | null {
   if (!raw) return null;
   const buildMatch = raw.match(/\bbuild\s+(\d+[a-z]?)\b/i);
