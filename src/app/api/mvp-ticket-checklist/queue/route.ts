@@ -3,6 +3,7 @@ import { jiraFetch, readJiraConfig } from "@/lib/mvp-ticket-checklist";
 import {
   QUEUE_FIELDS,
   buildQueueJql,
+  describeCandidate,
   normaliseCandidate,
   rankCandidates,
   type RawJiraCandidate,
@@ -39,6 +40,10 @@ function isAccessAllowed(access?: string | null): boolean {
 export async function GET(request: Request): Promise<NextResponse<QueueResponse>> {
   const url = new URL(request.url);
   const access = url.searchParams.get("access");
+  // `?limit=all` is the /queue page contract: skip the TOP_N cap and return
+  // every ranked candidate. Anything else (or absent) keeps the historic
+  // BuddySuggestionStrip behaviour — top 10 only.
+  const includeAll = url.searchParams.get("limit") === "all";
 
   if (!isAccessAllowed(access)) {
     return NextResponse.json({ status: "error", message: "Access key required." }, { status: 401 });
@@ -72,7 +77,23 @@ export async function GET(request: Request): Promise<NextResponse<QueueResponse>
     .filter((c): c is NonNullable<typeof c> => c !== null);
 
   const ranked = rankCandidates({ candidates });
-  const top = ranked.slice(0, TOP_N);
+
+  let top: QueueRow[];
+  if (includeAll) {
+    // /queue page wants the *whole* result set so it can group by status
+    // (Ready / In progress / Waiting to start). rankCandidates strips
+    // non-testable tickets via isTestable(), so merge them back in as
+    // thin QueueRows — ranked rows keep their score-based order, the
+    // rest follow by recency.
+    const rankedKeys = new Set(ranked.map((row) => row.issueKey));
+    const extras = candidates
+      .filter((c) => !rankedKeys.has(c.issueKey))
+      .map((c) => describeCandidate(c))
+      .sort((a, b) => b.ageInStatusHours - a.ageInStatusHours);
+    top = [...ranked, ...extras];
+  } else {
+    top = ranked.slice(0, TOP_N);
+  }
 
   const presenceMap = await getPresenceMany(top.map((row) => row.issueKey));
   const presenceEnabled = Object.values(presenceMap).some((v) => v !== null) || Boolean(process.env.KV_REST_API_URL);
@@ -96,6 +117,11 @@ export async function GET(request: Request): Promise<NextResponse<QueueResponse>
   return NextResponse.json({
     status: "ready",
     rows: publicRows,
+    // `total` is the count of *ranked* (ready-to-verify) tickets. The
+    // legacy BuddySuggestionStrip already shows this as "Queue N", so
+    // keep the meaning stable even when ?limit=all expands rows[] with
+    // not-yet-testable entries. /queue page derives its own counts from
+    // rows[].
     total: ranked.length,
     presenceEnabled,
   });
