@@ -23,6 +23,9 @@ import {
   LockKeyhole,
   Loader2,
   MessageSquareText,
+  Minus,
+  Clock3,
+  X as XIcon,
   MonitorSmartphone,
   MoreHorizontal,
   RefreshCcw,
@@ -757,6 +760,44 @@ async function writeClipboardText(text: string): Promise<boolean> {
 // for John/Tay. Renders inside the active step card so the user no longer
 // needs to hop to Jira to see the test plan. Only mounts when the AI has
 // actually posted an Agent Test Update.
+
+// Classifies a surface result string (e.g. "Verified on iPhone 17 Pro sim",
+// "N/A — client-side coalescing fix only.", "Not run") into one of four
+// states so chips can carry the right color + icon + tooltip. Order matters:
+// fail/N/A/not-run are detected first; anything else with content is treated
+// as "passed" (someone bothered to write a result).
+type SurfaceState = "passed" | "failed" | "na" | "not-run";
+
+function classifySurfaceResult(value: string): SurfaceState {
+  const v = (value || "").toLowerCase().trim();
+  if (!v) return "not-run";
+  if (/\b(fail(ed|s|ure)?|broken|blocked|red\b|error)\b/.test(v)) return "failed";
+  if (/^n\.?\/?a\b|\bnot applicable\b|client-side.+only|server-side.+only/.test(v)) return "na";
+  if (/\b(not run|not reported|not tested|skipped|deferred|pending|tbd)\b/.test(v)) return "not-run";
+  return "passed";
+}
+
+const SURFACE_TONE: Record<SurfaceState, string> = {
+  passed: "border-emerald-300/55 bg-emerald-300/15 text-emerald-50",
+  failed: "border-red-300/55 bg-red-300/15 text-red-50",
+  na: "border-white/15 bg-white/[0.04] text-[var(--muted-strong)]",
+  "not-run": "border-amber-300/45 bg-amber-300/10 text-amber-100",
+};
+
+const SURFACE_ICON: Record<SurfaceState, typeof Check> = {
+  passed: Check,
+  failed: XIcon,
+  na: Minus,
+  "not-run": Clock3,
+};
+
+const SURFACE_TITLE: Record<SurfaceState, string> = {
+  passed: "Passed",
+  failed: "Failed",
+  na: "Not applicable",
+  "not-run": "Not run yet",
+};
+
 function AgentTestSummaryPanel({
   agentUpdate,
 }: {
@@ -877,24 +918,32 @@ function AgentTestSummaryPanel({
           <h3 className="text-base font-semibold text-white">What the AI checked</h3>
           <div className="mt-2 flex flex-wrap gap-2">
             {surfaceChips.map((chip) => {
-              const v = chip.value.toLowerCase();
-              const tone = /pass/.test(v)
-                ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100"
-                : /fail/.test(v)
-                  ? "border-red-300/45 bg-red-300/10 text-red-100"
-                  : "border-white/15 bg-white/[0.04] text-[var(--muted-strong)]";
+              const state = classifySurfaceResult(chip.value);
+              const tone = SURFACE_TONE[state];
+              const Icon = SURFACE_ICON[state];
+              const stateLabel = SURFACE_TITLE[state];
               return (
                 <span
                   key={chip.label}
                   className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${tone}`}
-                  title={chip.value}
+                  title={`${stateLabel}: ${chip.value}`}
                 >
+                  <Icon size={12} strokeWidth={3} aria-hidden />
                   <span className="font-bold uppercase tracking-wide">{chip.label}</span>
                   <span className="truncate font-medium normal-case">{chip.value}</span>
                 </span>
               );
             })}
           </div>
+          <p className="mt-2 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+            <span className="inline-flex items-center gap-1"><Check size={9} strokeWidth={3} className="text-emerald-200" /> passed</span>
+            <span className="mx-2">·</span>
+            <span className="inline-flex items-center gap-1"><Minus size={9} strokeWidth={3} className="text-[var(--muted)]" /> not applicable</span>
+            <span className="mx-2">·</span>
+            <span className="inline-flex items-center gap-1"><Clock3 size={9} strokeWidth={3} className="text-amber-200" /> not run yet</span>
+            <span className="mx-2">·</span>
+            <span className="inline-flex items-center gap-1"><XIcon size={9} strokeWidth={3} className="text-red-200" /> failed</span>
+          </p>
         </div>
       ) : null}
 
