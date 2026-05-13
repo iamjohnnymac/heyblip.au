@@ -16,7 +16,12 @@ export function classifySurfaceResult(value: string): SurfaceState {
   const v = (value || "").toLowerCase().trim();
   if (!v) return "not-run";
   if (/\b(fail(ed|s|ure)?|broken|blocked|red\b|error)\b/.test(v)) return "failed";
-  if (/^n\.?\/?a\b|\bnot applicable\b|client-side.+only|server-side.+only/.test(v)) return "na";
+  if (
+    /^n\.?\/?a\b|\bnot applicable\b|\bnot required\b|\bnot needed\b|\bno .{0,40}(needed|required|changed?)\b|client-side.+only|server-side.+only/.test(
+      v,
+    )
+  )
+    return "na";
   if (/\b(not run|not reported|not tested|skipped|deferred|pending|tbd)\b/.test(v)) return "not-run";
   return "passed";
 }
@@ -120,7 +125,7 @@ export function AgentTestSummaryPanel({
                           segment.kind === "code" ? (
                             <code
                               key={idx}
-                              className="break-words rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)]"
+                              className="box-decoration-clone rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)] [overflow-wrap:anywhere]"
                             >
                               {segment.value}
                             </code>
@@ -150,7 +155,7 @@ export function AgentTestSummaryPanel({
             On the next release, these alerts should drop sharply:{" "}
             {sentryIds.map((id, idx) => (
               <span key={id}>
-                <code className="rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)]">
+                <code className="box-decoration-clone rounded bg-black/50 px-1.5 py-0.5 font-mono text-[12.5px] text-[var(--accent-light)]">
                   {id}
                 </code>
                 {idx < sentryIds.length - 1 ? ", " : ""}
@@ -173,12 +178,12 @@ export function AgentTestSummaryPanel({
               return (
                 <span
                   key={chip.label}
-                  className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${tone}`}
+                  className={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold sm:max-w-[28rem] ${tone}`}
                   title={`${stateLabel}: ${chip.value}`}
                 >
-                  <Icon size={12} strokeWidth={3} aria-hidden />
-                  <span className="font-bold uppercase tracking-wide">{chip.label}</span>
-                  <span className="truncate font-medium normal-case">{chip.value}</span>
+                  <Icon size={12} strokeWidth={3} aria-hidden className="shrink-0" />
+                  <span className="shrink-0 font-bold uppercase tracking-wide">{chip.label}</span>
+                  <span className="min-w-0 flex-1 truncate font-medium normal-case">{chip.value}</span>
                 </span>
               );
             })}

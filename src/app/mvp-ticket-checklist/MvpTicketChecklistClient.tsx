@@ -38,6 +38,8 @@ import { AskBuddyInline } from "./_components/AskBuddyInline";
 import { ErrorPanel } from "./_components/ErrorPanel";
 import { CopyButton, DisclosurePanel, IssueLinkRow } from "./_components/SmallComponents";
 import {
+  decodeHtmlEntities,
+  humaniseTimestamps,
   openClaude,
   openCodex,
   statusTone,
@@ -1402,8 +1404,9 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                           className={`mt-2 text-sm font-bold leading-6 ${
                             field.empty ? "text-amber-200" : "text-[var(--accent-light)]"
                           }`}
+                          style={textWrapStyle}
                         >
-                          Current value: {field.value}
+                          Current value: {humaniseTimestamps(decodeHtmlEntities(field.value))}
                         </p>
                         {help ? (
                           <p className="mt-2 text-sm leading-6 text-[var(--muted-strong)]">{help.plain}</p>
@@ -1415,8 +1418,8 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
               </DisclosurePanel>
 
               <DisclosurePanel title="Debug details" icon={<ListChecks size={18} />}>
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,0.75fr)_minmax(280px,0.25fr)]">
-                  <div className="rounded-xl border border-[var(--border)] bg-black/20 p-4">
+                <div className="grid gap-5 lg:grid-cols-2">
+                  <div className="rounded-xl border border-[var(--border)] bg-black/20 p-5">
                     <p className="text-sm font-bold text-white">
                       Loop stage: {data.customFields.loopStage || "Not set in Jira"}
                     </p>
@@ -1428,11 +1431,11 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                           }`
                         : "details present"}
                     </p>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="mt-4 grid gap-2 grid-cols-2 sm:grid-cols-3">
                       {loopStages.map((stage, index) => (
                         <div
                           key={stage}
-                          className={`rounded-lg border p-3 text-sm ${
+                          className={`flex min-h-[2.75rem] items-center justify-center rounded-lg border px-3 py-2 text-center text-xs font-semibold leading-snug ${
                             index <= stageIndex
                               ? "border-[var(--accent)]/35 bg-[var(--accent)]/10 text-white"
                               : "border-[var(--border)] bg-black/20 text-[var(--muted-strong)]"

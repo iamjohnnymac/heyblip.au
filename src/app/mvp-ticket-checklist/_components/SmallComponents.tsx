@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Check, ChevronDown, Copy, ExternalLink, GitBranch } from "lucide-react";
-import { statusTone, textWrapStyle } from "./shared";
+import { decodeHtmlEntities, statusTone, textWrapStyle } from "./shared";
 
 export function CopyButton({
   status,
@@ -68,7 +68,7 @@ export function IssueLinkRow({
   return (
     <a
       href={`${baseUrl}/browse/${encodeURIComponent(link.key)}`}
-      className="grid gap-2 rounded-xl border border-[var(--border)] bg-black/20 p-4 transition-colors hover:border-[var(--border-strong)]"
+      className="grid gap-3 rounded-xl border border-[var(--border)] bg-black/20 p-4 transition-colors hover:border-[var(--border-strong)]"
     >
       <div className="flex min-w-0 items-center gap-2">
         <GitBranch size={16} className="shrink-0 text-[var(--accent-light)]" />
@@ -79,7 +79,7 @@ export function IssueLinkRow({
         <ExternalLink size={14} className="ml-auto shrink-0 text-[var(--muted)]" />
       </div>
       <p className="text-sm leading-6 text-[var(--muted-strong)]" style={textWrapStyle}>
-        {link.summary || "No summary returned"}
+        {decodeHtmlEntities(link.summary) || "No summary returned"}
       </p>
       {link.status ? (
         <span className={`w-fit rounded-md border px-2 py-1 text-xs font-bold ${statusTone(link.status)}`}>

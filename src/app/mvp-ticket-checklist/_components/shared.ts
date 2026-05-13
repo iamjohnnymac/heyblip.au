@@ -87,6 +87,49 @@ export function truncate(value: string, max: number): string {
   return `${value.slice(0, max - 1).trim()}…`;
 }
 
+// Jira REST sometimes returns summaries with HTML-encoded characters
+// ("Auth &amp; Identity"). Decode the handful of entities Atlassian emits
+// so they render as their actual glyphs.
+const HTML_ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&apos;": "'",
+  "&nbsp;": " ",
+};
+
+export function decodeHtmlEntities(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.replace(/&(?:amp|lt|gt|quot|#39|apos|nbsp);/g, (m) => HTML_ENTITIES[m] ?? m);
+}
+
+// Detect bare or parenthesised ISO timestamps inside a free-form Jira value
+// ("build 60 (2026-05-07T06:27:30Z)") and rewrite them as a friendly local
+// date so the UI doesn't bleed raw machine timestamps. Non-date values pass
+// through unchanged.
+const ISO_TS_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
+
+export function humaniseTimestamps(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.replace(ISO_TS_RE, (iso) => {
+    const ts = Date.parse(iso);
+    if (!Number.isFinite(ts)) return iso;
+    try {
+      return new Date(ts).toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  });
+}
+
 export function statusTone(status: string): string {
   const lower = status.toLowerCase();
   if (lower.includes("done") || lower.includes("passed")) return "border-emerald-400/30 bg-emerald-400/10 text-emerald-200";
