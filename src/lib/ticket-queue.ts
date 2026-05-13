@@ -44,6 +44,13 @@ export type QueueCandidate = {
   statusChangedAt: string;
   blocksKeys: string[];
   blockedByKeys: string[];
+  // The /queue overview page surfaces these directly:
+  // - `labels` powers the "Launch blocker" pill (Jira label `launch-blocker`).
+  // - `hasAgentTestUpdate` / `hasHumanTestResult` light up "AI summary" / "Human
+  //   result" pills without forcing the page to re-parse comment bodies.
+  labels: string[];
+  hasAgentTestUpdate: boolean;
+  hasHumanTestResult: boolean;
 };
 
 export type QueueRow = QueueCandidate & {
@@ -103,6 +110,74 @@ function priorityName(value: unknown): string {
   return asNamed(value) || "Medium";
 }
 
+function extractLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.trim()) {
+      out.push(entry.trim());
+    } else if (entry && typeof entry === "object") {
+      const named = asString((entry as Record<string, unknown>).name);
+      if (named) out.push(named);
+    }
+  }
+  return out;
+}
+
+// Walk an ADF document (or any nested object) and concatenate every `text`
+// node. We can't import adfToPlainText from mvp-ticket-checklist.ts without
+// pulling in that whole module (and breaking the node --test isolation this
+// file deliberately keeps), so this is a tiny duplicate scoped to label
+// detection — text nodes only, no formatting needed.
+function collectAdfText(node: unknown, parts: string[]): void {
+  if (!node) return;
+  if (typeof node === "string") {
+    parts.push(node);
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) collectAdfText(child, parts);
+    return;
+  }
+  if (typeof node !== "object") return;
+  const record = node as Record<string, unknown>;
+  if (typeof record.text === "string") parts.push(record.text);
+  if (Array.isArray(record.content)) collectAdfText(record.content, parts);
+}
+
+function commentBodyToText(body: unknown): string {
+  if (typeof body === "string") return body;
+  const parts: string[] = [];
+  collectAdfText(body, parts);
+  return parts.join(" ");
+}
+
+function scanComments(value: unknown): { hasAgentTestUpdate: boolean; hasHumanTestResult: boolean } {
+  // Jira's search/jql returns comments as `{ comments: [...], total, ... }`
+  // when the `comment` field is requested. Be tolerant of either shape: a
+  // bare array, a wrapper object, or missing entirely.
+  let list: unknown[] = [];
+  if (Array.isArray(value)) {
+    list = value;
+  } else if (value && typeof value === "object") {
+    const wrapper = value as Record<string, unknown>;
+    if (Array.isArray(wrapper.comments)) list = wrapper.comments;
+  }
+
+  let hasAgentTestUpdate = false;
+  let hasHumanTestResult = false;
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const text = commentBodyToText(record.body);
+    if (!text) continue;
+    if (!hasAgentTestUpdate && /agent test update/i.test(text)) hasAgentTestUpdate = true;
+    if (!hasHumanTestResult && /human test result/i.test(text)) hasHumanTestResult = true;
+    if (hasAgentTestUpdate && hasHumanTestResult) break;
+  }
+  return { hasAgentTestUpdate, hasHumanTestResult };
+}
+
 function extractIssueLinks(value: unknown): { blocksKeys: string[]; blockedByKeys: string[] } {
   const result = { blocksKeys: [] as string[], blockedByKeys: [] as string[] };
   if (!Array.isArray(value)) return result;
@@ -139,6 +214,8 @@ export function normaliseCandidate(raw: RawJiraCandidate): QueueCandidate | null
   if (SKIP_STATUSES.has(lowerStatus)) return null;
 
   const links = extractIssueLinks(fields.issuelinks);
+  const labels = extractLabels(fields.labels);
+  const { hasAgentTestUpdate, hasHumanTestResult } = scanComments(fields.comment);
 
   return {
     issueKey: raw.key,
@@ -154,6 +231,9 @@ export function normaliseCandidate(raw: RawJiraCandidate): QueueCandidate | null
     statusChangedAt: asString(fields.statuscategorychangedate) || asString(fields.updated),
     blocksKeys: links.blocksKeys,
     blockedByKeys: links.blockedByKeys,
+    labels,
+    hasAgentTestUpdate,
+    hasHumanTestResult,
   };
 }
 
@@ -301,6 +381,28 @@ export function rankCandidates({ candidates, recentlyLoadedKeys, now = Date.now(
   return rows;
 }
 
+// Builds a "thin" QueueRow for candidates that aren't ranked (because
+// they're not yet testable). The /queue overview groups by status — it
+// needs to render "In progress" and "Waiting to start" cards even when
+// rankCandidates would skip them. Score is set to 0 with no reasons so a
+// caller can still merge these into the ranked list without surprising the
+// ranker. Kept here so the ticket-queue module stays the single source of
+// truth for QueueRow shape.
+export function describeCandidate(candidate: QueueCandidate, now: number = Date.now()): QueueRow {
+  const buildField = candidate.verifiedBuildOrCommit.toLowerCase();
+  const hasBuild = Boolean(buildField) && buildField !== "not set";
+  const hasHumanReady = candidate.humanFinalReview.toLowerCase() === "ready";
+  return {
+    ...candidate,
+    score: 0,
+    reasons: [],
+    ageInStatusHours: ageHours(candidate.statusChangedAt, now),
+    hasBuild,
+    hasHumanReady,
+    surfaceList: compactSurfaces(candidate.verificationSurface).map(describeSurface),
+  };
+}
+
 export function buildQueueJql(): string {
   // Status-based filter; the JQL keeps the result set small. Re-ranking happens
   // server-side. Excluding Done/Passed states up front saves a round-trip.
@@ -319,6 +421,8 @@ export const QUEUE_FIELDS = [
   "updated",
   "statuscategorychangedate",
   "issuelinks",
+  "labels",
+  "comment",
   MVP_CUSTOM_FIELDS.mvpTrack,
   MVP_CUSTOM_FIELDS.loopStage,
   MVP_CUSTOM_FIELDS.verificationSurface,
