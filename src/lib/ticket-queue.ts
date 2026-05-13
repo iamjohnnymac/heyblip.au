@@ -48,9 +48,16 @@ export type QueueCandidate = {
   // - `labels` powers the "Launch blocker" pill (Jira label `launch-blocker`).
   // - `hasAgentTestUpdate` / `hasHumanTestResult` light up "AI summary" / "Human
   //   result" pills without forcing the page to re-parse comment bodies.
+  // - `agentTestUpdateStatus` is the parsed `Agent testing:` value from the
+  //   Agent Test Update comment ("passed" / "failed" / "inconclusive" / "unknown").
+  //   The queue bucketing uses it to promote In Progress tickets with a
+  //   `passed` summary into "Ready for you" — closes the BDEV-493-style gap
+  //   where the merge-to-Verifying automation didn't fire but the AI did
+  //   finish the work.
   labels: string[];
   hasAgentTestUpdate: boolean;
   hasHumanTestResult: boolean;
+  agentTestUpdateStatus: "passed" | "failed" | "inconclusive" | "unknown";
 };
 
 export type QueueRow = QueueCandidate & {
@@ -152,7 +159,11 @@ function commentBodyToText(body: unknown): string {
   return parts.join(" ");
 }
 
-function scanComments(value: unknown): { hasAgentTestUpdate: boolean; hasHumanTestResult: boolean } {
+function scanComments(value: unknown): {
+  hasAgentTestUpdate: boolean;
+  hasHumanTestResult: boolean;
+  agentTestUpdateStatus: "passed" | "failed" | "inconclusive" | "unknown";
+} {
   // Jira's search/jql returns comments as `{ comments: [...], total, ... }`
   // when the `comment` field is requested. Be tolerant of either shape: a
   // bare array, a wrapper object, or missing entirely.
@@ -166,16 +177,29 @@ function scanComments(value: unknown): { hasAgentTestUpdate: boolean; hasHumanTe
 
   let hasAgentTestUpdate = false;
   let hasHumanTestResult = false;
+  let agentTestUpdateStatus: "passed" | "failed" | "inconclusive" | "unknown" = "unknown";
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
     const text = commentBodyToText(record.body);
     if (!text) continue;
-    if (!hasAgentTestUpdate && /agent test update/i.test(text)) hasAgentTestUpdate = true;
+    if (!hasAgentTestUpdate && /agent test update/i.test(text)) {
+      hasAgentTestUpdate = true;
+      // Parse the `Agent testing:` labelled value from the same comment so
+      // the queue can promote `passed` tickets into the Ready bucket even if
+      // their Jira status didn't auto-transition.
+      const match = text.match(/agent testing:\s*(passed|failed|inconclusive)/i);
+      if (match) {
+        const value = match[1].toLowerCase();
+        if (value === "passed" || value === "failed" || value === "inconclusive") {
+          agentTestUpdateStatus = value;
+        }
+      }
+    }
     if (!hasHumanTestResult && /human test result/i.test(text)) hasHumanTestResult = true;
     if (hasAgentTestUpdate && hasHumanTestResult) break;
   }
-  return { hasAgentTestUpdate, hasHumanTestResult };
+  return { hasAgentTestUpdate, hasHumanTestResult, agentTestUpdateStatus };
 }
 
 function extractIssueLinks(value: unknown): { blocksKeys: string[]; blockedByKeys: string[] } {
@@ -215,7 +239,7 @@ export function normaliseCandidate(raw: RawJiraCandidate): QueueCandidate | null
 
   const links = extractIssueLinks(fields.issuelinks);
   const labels = extractLabels(fields.labels);
-  const { hasAgentTestUpdate, hasHumanTestResult } = scanComments(fields.comment);
+  const { hasAgentTestUpdate, hasHumanTestResult, agentTestUpdateStatus } = scanComments(fields.comment);
 
   return {
     issueKey: raw.key,
@@ -234,6 +258,7 @@ export function normaliseCandidate(raw: RawJiraCandidate): QueueCandidate | null
     labels,
     hasAgentTestUpdate,
     hasHumanTestResult,
+    agentTestUpdateStatus,
   };
 }
 
@@ -410,10 +435,13 @@ export function buildQueueJql(): string {
   // "To Do" is included so the queue surfaces the backlog ("Not yet picked
   // up") section. isTestable() still excludes To Do from the ranked
   // testing groups — those tickets render in a separate bucket on /queue.
+  // Epics are containers, not testable items — filter them out so they
+  // don't pollute the backlog section.
   return [
     'project = BDEV',
     'AND status in ("To Do", "In Progress", "Verifying", "Selected")',
     'AND statusCategory != "Done"',
+    'AND issuetype != "Epic"',
     'ORDER BY updated DESC',
   ].join(" ");
 }

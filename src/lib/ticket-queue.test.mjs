@@ -156,6 +156,87 @@ test("buildQueueJql includes 'To Do' so the backlog section can render", () => {
   assert.match(jql, /"Selected"/);
 });
 
+test("buildQueueJql excludes Epics so they don't pollute the backlog", () => {
+  const jql = buildQueueJql();
+  assert.match(jql, /issuetype\s*!=\s*"Epic"/i);
+});
+
+// --- agentTestUpdateStatus: parses the labelled value from the comment ---
+
+test("normaliseCandidate parses agentTestUpdateStatus=passed from Agent Test Update", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        comment: {
+          comments: [
+            {
+              body: {
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [{ type: "text", text: "## Agent Test Update\n\nAgent testing: passed\nBuild/commit: build 67" }],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    }),
+  );
+  assert.equal(c.hasAgentTestUpdate, true);
+  assert.equal(c.agentTestUpdateStatus, "passed");
+});
+
+test("normaliseCandidate parses agentTestUpdateStatus=inconclusive for preview-style summaries", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        comment: {
+          comments: [
+            { body: "## Agent Test Update\n\nAgent testing: inconclusive\nBuild/commit: pending" },
+          ],
+        },
+      },
+    }),
+  );
+  assert.equal(c.agentTestUpdateStatus, "inconclusive");
+});
+
+test("normaliseCandidate parses agentTestUpdateStatus=failed", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        comment: {
+          comments: [{ body: "## Agent Test Update\nAgent testing: failed\n" }],
+        },
+      },
+    }),
+  );
+  assert.equal(c.agentTestUpdateStatus, "failed");
+});
+
+test("normaliseCandidate defaults agentTestUpdateStatus=unknown when no summary present", () => {
+  const c = normaliseCandidate(makeRawCandidate({ fields: { comment: { comments: [] } } }));
+  assert.equal(c.hasAgentTestUpdate, false);
+  assert.equal(c.agentTestUpdateStatus, "unknown");
+});
+
+test("normaliseCandidate returns agentTestUpdateStatus=unknown when summary lacks a status line", () => {
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        comment: {
+          comments: [{ body: "## Agent Test Update\nNo status line here." }],
+        },
+      },
+    }),
+  );
+  assert.equal(c.hasAgentTestUpdate, true);
+  assert.equal(c.agentTestUpdateStatus, "unknown");
+});
+
 // --- isTestable still excludes vanilla To Do tickets --------------------
 
 test("isTestable returns false for a vanilla To Do ticket (no build, no review)", () => {

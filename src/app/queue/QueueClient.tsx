@@ -40,6 +40,7 @@ export type QueueRowView = {
   labels: string[];
   hasAgentTestUpdate: boolean;
   hasHumanTestResult: boolean;
+  agentTestUpdateStatus: "passed" | "failed" | "inconclusive" | "unknown";
   reasons: string[];
   ageInStatusHours: number;
   hasBuild: boolean;
@@ -74,7 +75,14 @@ function isReady(row: QueueRowView): boolean {
   const stage = row.loopStage.toLowerCase();
   if (status === "verifying") return true;
   if (review === "ready") return true;
-  return /verifying|in build|ci green/i.test(stage);
+  if (/verifying|in build|ci green/i.test(stage)) return true;
+  // Fallback: an In Progress ticket whose AI summary says "passed" is
+  // ready to test even if its Jira status didn't auto-transition. Catches
+  // the BDEV-493-style drift where the merge-to-Verifying automation
+  // didn't fire (engineer skipped To Do → In Progress, or the PR title
+  // didn't match the rule).
+  if (status === "in progress" && row.agentTestUpdateStatus === "passed") return true;
+  return false;
 }
 
 function isInProgress(row: QueueRowView): boolean {
