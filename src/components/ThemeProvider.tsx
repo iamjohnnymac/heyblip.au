@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { MotionConfig } from "framer-motion";
 
 type Theme = "dark" | "light" | "system";
 
@@ -9,7 +10,7 @@ const ThemeContext = createContext<{
   resolved: "dark" | "light";
   setTheme: (t: Theme) => void;
 }>({
-  theme: "system",
+  theme: "dark",
   resolved: "dark",
   setTheme: () => {},
 });
@@ -19,10 +20,7 @@ export function useTheme() {
 }
 
 function getSystemTheme(): "dark" | "light" {
-  if (typeof window === "undefined") return "dark";
-  return window.matchMedia("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
+  return "dark";
 }
 
 export default function ThemeProvider({
@@ -30,38 +28,16 @@ export default function ThemeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [theme, setThemeState] = useState<Theme>("system");
-  const [resolved, setResolved] = useState<"dark" | "light">("dark");
+  const [theme, setThemeState] = useState<Theme>("dark");
+  const systemTheme = getSystemTheme();
+  const resolved = theme === "system" ? systemTheme : theme;
 
-  useEffect(() => {
-    const saved = localStorage.getItem("blip-theme") as Theme | null;
-    if (saved) setThemeState(saved);
-  }, []);
-
-  useEffect(() => {
-    const r = theme === "system" ? getSystemTheme() : theme;
-    setResolved(r);
-    document.documentElement.setAttribute("data-theme", theme === "system" ? "system" : r);
-    localStorage.setItem("blip-theme", theme);
-  }, [theme]);
-
-  // Listen for system changes
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: light)");
-    const handler = () => {
-      if (theme === "system") {
-        setResolved(getSystemTheme());
-      }
-    };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [theme]);
-
-  const setTheme = (t: Theme) => setThemeState(t);
+  const setTheme = useCallback((t: Theme) => setThemeState(t), []);
+  const value = useMemo(() => ({ theme, resolved, setTheme }), [theme, resolved, setTheme]);
 
   return (
-    <ThemeContext.Provider value={{ theme, resolved, setTheme }}>
-      {children}
+    <ThemeContext.Provider value={value}>
+      <MotionConfig reducedMotion="user">{children}</MotionConfig>
     </ThemeContext.Provider>
   );
 }

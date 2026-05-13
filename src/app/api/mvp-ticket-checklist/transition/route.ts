@@ -1,0 +1,168 @@
+import { NextResponse } from "next/server";
+import {
+  normalizeIssueKey,
+  postJiraComment,
+  readJiraConfig,
+  transitionJiraIssue,
+} from "@/lib/mvp-ticket-checklist";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const runtime = "nodejs";
+
+// Transition ids on the BDEV workflow. Mirrors findings/route.ts.
+// The "Mark verified" transition runs a regex validator that requires
+// one of: commit hash, build SHA, "skip:", build N, deployed, smoke
+// trace passed. Our verification comment always contains "build N" or
+// "skip:" so it passes the validator.
+const TRANSITION_IDS = {
+  "mark-done": "3", // Verifying -> Done ("Mark verified")
+  reopen: "4", // Verifying -> In Progress ("Reopen for fix")
+} as const;
+
+type TransitionAction = keyof typeof TRANSITION_IDS;
+
+type TransitionPayload = {
+  issue?: string;
+  issueKey?: string;
+  access?: string;
+  action?: TransitionAction;
+  findingsCommentId?: string;
+  aiReasoning?: string;
+  buildOrCommit?: string;
+};
+
+type TransitionResponse =
+  | { status: "ready"; action: TransitionAction; verificationCommentId: string }
+  | { status: "error"; message: string };
+
+function needsAccessGate(): boolean {
+  return process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+}
+
+function isAccessAllowed(access?: string): boolean {
+  if (!needsAccessGate()) return true;
+  const accessKey = process.env.MVP_CHECKLIST_ACCESS_KEY;
+  return Boolean(accessKey && access === accessKey);
+}
+
+export async function POST(request: Request): Promise<NextResponse<TransitionResponse>> {
+  let payload: TransitionPayload;
+  try {
+    payload = (await request.json()) as TransitionPayload;
+  } catch {
+    return NextResponse.json(
+      { status: "error", message: "Send a JSON body with the issue key and action." },
+      { status: 400 },
+    );
+  }
+
+  if (!isAccessAllowed(payload.access)) {
+    return NextResponse.json({ status: "error", message: "Access key required." }, { status: 401 });
+  }
+
+  const issueKey = normalizeIssueKey(payload.issue || payload.issueKey);
+  if (!issueKey) {
+    return NextResponse.json(
+      { status: "error", message: "Use a Jira issue key like BDEV-494." },
+      { status: 400 },
+    );
+  }
+
+  const action = payload.action;
+  if (action !== "mark-done" && action !== "reopen") {
+    return NextResponse.json(
+      { status: "error", message: "Action must be 'mark-done' or 'reopen'." },
+      { status: 400 },
+    );
+  }
+
+  const jiraConfig = readJiraConfig();
+  if ("missingEnv" in jiraConfig) {
+    return NextResponse.json(
+      { status: "error", message: "Jira is not configured on the server." },
+      { status: 503 },
+    );
+  }
+
+  // Build the comment that goes with the transition. For "mark-done"
+  // it MUST contain "build N" or a commit SHA to satisfy the workflow
+  // validator. For "reopen" it tells the next coding-agent what to fix.
+  const buildOrCommit = (payload.buildOrCommit || "").trim();
+  const reasoning = (payload.aiReasoning || "").trim();
+  const findingsRef = (payload.findingsCommentId || "").trim();
+
+  const transitionComment = buildTransitionComment({
+    action,
+    buildOrCommit,
+    reasoning,
+    findingsCommentId: findingsRef,
+  });
+
+  // Post the transition comment first, then run the transition. We
+  // post the comment separately (rather than bundled with the
+  // transition) so the validator on "Mark verified" reads the
+  // freshly-posted comment.
+  let verificationCommentId = "";
+  try {
+    verificationCommentId = await postJiraComment(jiraConfig, issueKey, transitionComment);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Posting the transition comment failed.";
+    return NextResponse.json({ status: "error", message }, { status: 502 });
+  }
+
+  try {
+    await transitionJiraIssue(jiraConfig, issueKey, TRANSITION_IDS[action]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Jira transition failed.";
+    return NextResponse.json({ status: "error", message }, { status: 502 });
+  }
+
+  return NextResponse.json({
+    status: "ready",
+    action,
+    verificationCommentId,
+  });
+}
+
+function buildTransitionComment(input: {
+  action: TransitionAction;
+  buildOrCommit: string;
+  reasoning: string;
+  findingsCommentId: string;
+}): string {
+  const ref = input.findingsCommentId
+    ? `See the Human Test Result comment (id ${input.findingsCommentId}) above for the full findings + AI verdict.`
+    : "See the Human Test Result comment above for the full findings + AI verdict.";
+
+  if (input.action === "mark-done") {
+    // The validator wants a build number or commit SHA in here.
+    const buildLine = input.buildOrCommit
+      ? `Verified on build ${input.buildOrCommit}.`
+      : "Verified on the latest TestFlight build. (skip: build number not surfaced by the AI summary)";
+    const lines = [
+      "Verification (Mark verified)",
+      "",
+      buildLine,
+      "",
+      input.reasoning ? `AI reasoning: ${input.reasoning}` : "",
+      "",
+      ref,
+    ].filter(Boolean);
+    return lines.join("\n");
+  }
+
+  // Reopen for fix — tell the next coding-agent what's still broken.
+  const lines = [
+    "Reopen for fix",
+    "",
+    input.reasoning
+      ? `What's still broken (from the AI's read of the human findings):\n${input.reasoning}`
+      : "The human findings indicate this isn't done yet — read the Human Test Result comment for what they saw.",
+    "",
+    input.buildOrCommit ? `Tested on build ${input.buildOrCommit}.` : "",
+    "",
+    ref,
+  ].filter(Boolean);
+  return lines.join("\n");
+}

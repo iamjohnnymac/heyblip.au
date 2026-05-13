@@ -13,14 +13,16 @@ export default function ThemeToggle() {
   ];
 
   return (
-    <div className="flex items-center gap-1 glass rounded-full p-1">
+    <div className="flex items-center gap-1 glass rounded-full p-1" role="group" aria-label="Theme">
       {options.map((opt) => {
         const Icon = opt.icon;
         return (
           <button
             key={opt.value}
+            type="button"
             onClick={() => setTheme(opt.value)}
-            className={`p-1.5 rounded-full transition-all duration-200 ${
+            aria-pressed={theme === opt.value}
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200 ${
               theme === opt.value
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--foreground)]"
