@@ -123,17 +123,32 @@ export function AgentTestSummaryPanel({
             </p>
           ) : null}
           {items.length > 0 ? (
-            <ol className="mt-2 grid list-none gap-3 pl-0">
+            // grid-cols-1 forces a single-column grid so wide content
+            // inside a step doesn't expand the column track to its
+            // min-content width on mobile. Without this the long
+            // `main@<full-SHA>` SHA inside item #1 stretched the
+            // entire page to 2110px on a 390px viewport.
+            <ol className="mt-2 grid w-full min-w-0 grid-cols-1 list-none gap-3 pl-0">
               {items.map((item) => (
                 <li
                   key={item.number}
-                  className="flex gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3"
+                  // min-w-0 + overflow-hidden override the default
+                  // `min-width: auto` on flex items so the LI can
+                  // shrink even when its content has an unbreakable
+                  // long token (40-char SHA).
+                  className="flex min-w-0 gap-3 overflow-hidden rounded-xl border border-white/5 bg-white/[0.02] p-3"
                 >
                   <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/25 text-xs font-bold text-[var(--accent-light)]">
                     {item.number}
                   </span>
                   <div
-                    className="min-w-0 flex-1 break-words text-sm leading-6 text-white [overflow-wrap:anywhere]"
+                    // break-all forces breaks INSIDE any token; the
+                    // previous break-words / overflow-wrap:anywhere
+                    // combo wasn't aggressive enough on mobile because
+                    // Tailwind's `break-words` sets overflow-wrap:
+                    // break-word which only breaks between word
+                    // boundaries.
+                    className="min-w-0 flex-1 break-all text-sm leading-6 text-white"
                   >
                     {item.title ? (
                       <span className="font-semibold text-white">{item.title}</span>
