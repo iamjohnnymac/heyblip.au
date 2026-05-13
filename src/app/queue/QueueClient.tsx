@@ -273,7 +273,13 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
+    // overflow-x-hidden is a defensive clip — the chip row uses
+    // -mx-2 + overflow-x-auto for intentional inner horizontal scroll
+    // but on a narrow phone any other accidental wide content (long
+    // SHAs, untranslated copy, etc.) would otherwise push the page
+    // wider than the viewport. Containing horizontal scroll to where
+    // it's designed keeps the page from yo-yo-ing on touch.
+    <main className="mx-auto max-w-7xl overflow-x-hidden px-5 py-8 sm:px-8 sm:py-10">
       <Header
         total={rows.length}
         readyCount={counts.ready}
@@ -436,7 +442,7 @@ function TopPickBanner({ row, accessParam }: { row: QueueRowView; accessParam: s
             <Sparkles size={16} />
             <span className="text-xs font-bold uppercase tracking-wide">Buddy suggests next</span>
           </div>
-          <p className="text-lg font-bold leading-snug sm:text-xl">
+          <p className="break-words text-lg font-bold leading-snug sm:text-xl">
             <span className="mr-1.5 text-base font-extrabold tracking-wide text-[var(--accent-light)]">
               {row.issueKey}
             </span>
