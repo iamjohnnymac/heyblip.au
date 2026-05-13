@@ -1,19 +1,23 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowUp,
   Check,
+  FileText,
   HelpCircle,
+  Image as ImageIcon,
   Loader2,
   MessageSquareText,
+  Paperclip,
   RefreshCcw,
   Send,
   ThumbsDown,
   ThumbsUp,
   TicketCheck,
+  X as XIcon,
 } from "lucide-react";
 
 export type FindingsVerdict = {
@@ -58,11 +62,22 @@ export type TransitionState =
 //   - a loading state (~10s while Claude judges)
 //   - the verdict card with 3 buttons (Mark Done / Reopen / Need more info)
 //   - an error state with a retry option
+// Files the user has selected but not yet uploaded. The dropzone keeps
+// these around so they can drop more files in or remove ones before
+// submitting. On submit the client uploads the whole set in one POST.
+export type PendingAttachment = {
+  file: File;
+  // Object URL for image previews. Created on add, revoked on remove.
+  previewUrl?: string;
+};
+
 export function FindingsPanel({
   findingsText,
   setFindingsText,
   evidenceText,
   setEvidenceText,
+  attachments,
+  onAttachmentsChange,
   state,
   transitionState,
   onSubmit,
@@ -76,6 +91,8 @@ export function FindingsPanel({
   setFindingsText: (value: string) => void;
   evidenceText: string;
   setEvidenceText: (value: string) => void;
+  attachments: PendingAttachment[];
+  onAttachmentsChange: (next: PendingAttachment[]) => void;
   state: FindingsState;
   transitionState: TransitionState;
   onSubmit: () => void;
@@ -124,13 +141,19 @@ export function FindingsPanel({
           <textarea
             value={evidenceText}
             onChange={(event) => setEvidenceText(event.target.value)}
-            placeholder="Drag-and-drop or paste — Sentry IDs like APPLE-IOS-XX, debug log lines, anything."
+            placeholder="Paste — Sentry IDs like APPLE-IOS-XX, debug log lines, anything. Drag images or .txt files into the box below."
             rows={5}
             disabled={submitting}
             className="mt-1.5 block w-full resize-y rounded-xl border border-white/15 bg-black/30 px-3 py-2.5 text-sm leading-6 text-white placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 disabled:opacity-60"
             style={{ minHeight: 120, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}
           />
         </label>
+
+        <AttachmentDropzone
+          attachments={attachments}
+          onAttachmentsChange={onAttachmentsChange}
+          disabled={submitting}
+        />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -401,6 +424,187 @@ export function VerdictActionButtons({
       </button>
     </>
   );
+}
+
+// File upload affordance under the evidence textarea. Accepts drag-and-drop
+// and click-to-pick for screenshots (png/jpg/heic/gif/webp) and text logs
+// (.txt/.log/.json). Shows a chip per file with size and a remove button;
+// images get an inline thumbnail. Files only live in client state here —
+// upload happens on Submit findings (the parent handles that flow so the
+// upload + verdict request can be sequenced).
+const ACCEPTED_ATTACHMENT_EXTS = ".png,.jpg,.jpeg,.heic,.heif,.gif,.webp,.txt,.log,.json";
+const PER_FILE_MAX_BYTES = 10 * 1024 * 1024;
+
+function AttachmentDropzone({
+  attachments,
+  onAttachmentsChange,
+  disabled,
+}: {
+  attachments: PendingAttachment[];
+  onAttachmentsChange: (next: PendingAttachment[]) => void;
+  disabled?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const addFiles = useCallback(
+    (incoming: FileList | File[] | null) => {
+      if (!incoming || disabled) return;
+      const list = Array.from(incoming);
+      if (list.length === 0) return;
+      const rejected: string[] = [];
+      const accepted: PendingAttachment[] = [];
+      for (const file of list) {
+        if (file.size === 0) {
+          rejected.push(`${file.name}: empty file.`);
+          continue;
+        }
+        if (file.size > PER_FILE_MAX_BYTES) {
+          rejected.push(`${file.name}: over the 10 MB per-file limit.`);
+          continue;
+        }
+        const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+        accepted.push({ file, previewUrl });
+      }
+      if (accepted.length > 0) {
+        onAttachmentsChange([...attachments, ...accepted]);
+      }
+      setLocalError(rejected.length > 0 ? rejected.join(" ") : null);
+    },
+    [attachments, disabled, onAttachmentsChange],
+  );
+
+  const removeAt = useCallback(
+    (index: number) => {
+      const next = attachments.filter((_, idx) => idx !== index);
+      const removed = attachments[index];
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      onAttachmentsChange(next);
+    },
+    [attachments, onAttachmentsChange],
+  );
+
+  return (
+    <div className="block">
+      <span className="text-sm font-semibold text-white">
+        Screenshots or log files{" "}
+        <span className="font-normal text-[var(--muted)]">(optional, max 10 MB each)</span>
+      </span>
+      <div
+        onDragOver={(event) => {
+          if (disabled) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setDragging(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setDragging(false);
+        }}
+        onDrop={(event) => {
+          if (disabled) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setDragging(false);
+          addFiles(event.dataTransfer.files);
+        }}
+        onClick={() => {
+          if (!disabled) inputRef.current?.click();
+        }}
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        className={`mt-1.5 cursor-pointer rounded-xl border-2 border-dashed px-4 py-4 text-sm leading-6 transition-colors ${
+          disabled
+            ? "cursor-not-allowed border-white/10 bg-black/20 text-[var(--muted)] opacity-60"
+            : dragging
+              ? "border-[var(--accent)] bg-[var(--accent)]/10 text-white"
+              : "border-white/20 bg-black/30 text-[var(--muted-strong)] hover:border-white/35 hover:text-white"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <Paperclip size={16} className="shrink-0 text-[var(--accent-light)]" />
+          <span>
+            Drag screenshots or .txt/.log files here, or <span className="font-semibold text-white">click to pick</span>.
+            <span className="block text-xs text-[var(--muted)]">
+              Files attach to the Jira ticket so the AI sees them when grading.
+            </span>
+          </span>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept={ACCEPTED_ATTACHMENT_EXTS}
+          className="hidden"
+          disabled={disabled}
+          onChange={(event) => {
+            addFiles(event.target.files);
+            // Reset so the same file can be re-picked after a remove.
+            event.target.value = "";
+          }}
+        />
+      </div>
+
+      {attachments.length > 0 ? (
+        <ul className="mt-3 grid list-none gap-2 pl-0">
+          {attachments.map((entry, idx) => (
+            <li
+              key={`${entry.file.name}-${idx}`}
+              className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2"
+            >
+              {entry.previewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={entry.previewUrl}
+                  alt={entry.file.name}
+                  className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                />
+              ) : (
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.06] text-[var(--muted-strong)]">
+                  {entry.file.type.startsWith("image/") ? <ImageIcon size={16} /> : <FileText size={16} />}
+                </span>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-white">{entry.file.name}</p>
+                <p className="text-xs text-[var(--muted)]">{formatFileSize(entry.file.size)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeAt(idx)}
+                disabled={disabled}
+                aria-label={`Remove ${entry.file.name}`}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-black/30 text-[var(--muted-strong)] transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <XIcon size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {localError ? (
+        <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-1.5 text-xs text-amber-100">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          {localError}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function verdictChipCopy(verdict: FindingsVerdict["verdict"]): {

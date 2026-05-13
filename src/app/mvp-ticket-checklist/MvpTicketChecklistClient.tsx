@@ -26,6 +26,7 @@ import { StepTabs, type StepTab } from "./_components/StepTabs";
 import { FocusCard } from "./_components/FocusCard";
 import { AgentTestSummaryPanel, AgentTestSummaryChip } from "./_components/AgentTestSummary";
 import { GenerateSummaryButton } from "./_components/GenerateSummaryButton";
+import type { PendingAttachment } from "./_components/FindingsPanel";
 import {
   FindingsPanel,
   VerdictActionButtons,
@@ -687,6 +688,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
   const [checks, setChecks] = useState<Record<string, boolean>>(() => (data ? buildEmptyChecks(data) : {}));
   const [findingsText, setFindingsText] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [findingsState, setFindingsState] = useState<FindingsState>({ kind: "idle" });
   const [transitionState, setTransitionState] = useState<TransitionState>({ kind: "idle" });
   const studentSteps = useMemo(() => (data ? buildStudentTestSteps(data) : []), [data]);
@@ -760,6 +762,46 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
     const timeoutId = window.setTimeout(() => controller.abort(), FINDINGS_REQUEST_TIMEOUT_MS);
 
     try {
+      // Upload pending attachments to Jira first so the verdict request
+      // can include their links in the evidence the AI sees. Skip when
+      // nothing is attached so the path stays a single network call.
+      let evidenceWithAttachments = evidenceText.trim();
+      if (pendingAttachments.length > 0) {
+        const uploadForm = new FormData();
+        uploadForm.append("issue", issueKey);
+        if (accessParam) uploadForm.append("access", accessParam);
+        for (const entry of pendingAttachments) {
+          uploadForm.append("file", entry.file, entry.file.name);
+        }
+        const uploadResponse = await fetch("/api/mvp-ticket-checklist/findings-attachments", {
+          method: "POST",
+          signal: controller.signal,
+          body: uploadForm,
+        });
+        const uploadBody = (await uploadResponse.json()) as
+          | { status: "ready"; attachments: Array<{ filename: string; content: string; mimeType: string; size: number }> }
+          | { status: "error"; message: string };
+        if (!uploadResponse.ok || uploadBody.status !== "ready") {
+          const message = uploadBody.status === "error" && uploadBody.message
+            ? uploadBody.message
+            : "Buddy couldn't upload the attachments. Try again or remove them.";
+          setFindingsState({ kind: "error", message });
+          return;
+        }
+        const lines = uploadBody.attachments.map((entry) => {
+          const tag = entry.mimeType.startsWith("image/") ? "screenshot" : "log";
+          return `Attached ${tag}: ${entry.filename} — ${entry.content}`;
+        });
+        // Free the client-side blob URLs now that the files live in Jira.
+        for (const entry of pendingAttachments) {
+          if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+        }
+        setPendingAttachments([]);
+        evidenceWithAttachments = [evidenceWithAttachments, lines.join("\n")]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+
       const response = await fetch("/api/mvp-ticket-checklist/findings", {
         method: "POST",
         signal: controller.signal,
@@ -768,7 +810,7 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
           issue: issueKey,
           access: accessParam,
           findings: trimmed,
-          evidence: evidenceText.trim(),
+          evidence: evidenceWithAttachments,
         }),
       });
 
@@ -1236,6 +1278,8 @@ export default function MvpTicketChecklistClient({ state, accessParam }: Props) 
                       setFindingsText={setFindingsText}
                       evidenceText={evidenceText}
                       setEvidenceText={setEvidenceText}
+                      attachments={pendingAttachments}
+                      onAttachmentsChange={setPendingAttachments}
                       state={findingsState}
                       transitionState={transitionState}
                       onSubmit={submitFindings}
