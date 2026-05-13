@@ -33,7 +33,7 @@ export function PastHumanTestResultsPanel({ results }: { results: HumanTestResul
           return (
             <div
               key={result.commentId}
-              className={`rounded-xl border p-3 text-sm leading-6 ${tone.border} ${tone.bg}`}
+              className={`rounded-xl ${tone.bg} p-3 text-sm leading-6`}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${tone.chip}`}>
