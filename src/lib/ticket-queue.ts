@@ -406,9 +406,13 @@ export function describeCandidate(candidate: QueueCandidate, now: number = Date.
 export function buildQueueJql(): string {
   // Status-based filter; the JQL keeps the result set small. Re-ranking happens
   // server-side. Excluding Done/Passed states up front saves a round-trip.
+  //
+  // "To Do" is included so the queue surfaces the backlog ("Not yet picked
+  // up") section. isTestable() still excludes To Do from the ranked
+  // testing groups — those tickets render in a separate bucket on /queue.
   return [
     'project = BDEV',
-    'AND status in ("In Progress", "Verifying", "Selected")',
+    'AND status in ("To Do", "In Progress", "Verifying", "Selected")',
     'AND statusCategory != "Done"',
     'ORDER BY updated DESC',
   ].join(" ");

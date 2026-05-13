@@ -10,7 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normaliseCandidate, QUEUE_FIELDS } from "./ticket-queue.ts";
+import { buildQueueJql, isTestable, normaliseCandidate, QUEUE_FIELDS } from "./ticket-queue.ts";
 
 function makeRawCandidate({ key = "BDEV-700", fields = {} } = {}) {
   return {
@@ -144,4 +144,40 @@ test("normaliseCandidate finds the marker in any comment, not just the first", (
     }),
   );
   assert.equal(c.hasHumanTestResult, true);
+});
+
+// --- buildQueueJql: includes To Do for the backlog section ---------------
+
+test("buildQueueJql includes 'To Do' so the backlog section can render", () => {
+  const jql = buildQueueJql();
+  assert.match(jql, /"To Do"/);
+  assert.match(jql, /"In Progress"/);
+  assert.match(jql, /"Verifying"/);
+  assert.match(jql, /"Selected"/);
+});
+
+// --- isTestable still excludes vanilla To Do tickets --------------------
+
+test("isTestable returns false for a vanilla To Do ticket (no build, no review)", () => {
+  // Even though the queue now fetches To Do tickets, they shouldn't appear
+  // in the "Ready for you" / "In progress" / "Waiting to start" groups —
+  // the new "Not yet picked up" section owns them via status filtering.
+  const c = normaliseCandidate(
+    makeRawCandidate({
+      fields: {
+        status: { name: "To Do" },
+        customfield_10044: { value: "Candidate" },
+        customfield_10046: { value: "" },
+        customfield_10047: "",
+      },
+    }),
+  );
+  assert.equal(isTestable(c), false);
+});
+
+test("isTestable stays true for a Verifying ticket alongside the To Do widening", () => {
+  // Sanity: the JQL change shouldn't accidentally have flipped the testable
+  // criterion. Keep the existing behaviour locked in.
+  const c = normaliseCandidate(makeRawCandidate());
+  assert.equal(isTestable(c), true);
 });
