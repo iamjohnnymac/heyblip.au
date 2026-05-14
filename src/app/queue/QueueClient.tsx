@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, RefreshCw, Sparkles } from "lucide-react";
 import QueueCard from "./QueueCard";
 
@@ -47,6 +47,9 @@ export type QueueRowView = {
   hasHumanReady: boolean;
   surfaceList: string[];
   presence: { sessionId: string; ageMinutes: number } | null;
+  // Coarse work-area bucket — drives the area filter chip row. See
+  // classifyWorkArea() in src/lib/ticket-queue.ts for the mapping.
+  area: "ios" | "backend" | "web" | "launch" | "other";
 };
 
 type FetchState =
@@ -61,6 +64,28 @@ type FilterKey =
   | "backlog"
   | "launch-blockers"
   | "high-priority";
+
+// Area filter — orthogonal to FilterKey. Both filters compose (a row
+// must match BOTH the status filter and the area filter to show up).
+type AreaKey = "all" | "ios" | "backend" | "web" | "launch" | "other";
+
+const AREA_LABELS: Record<AreaKey, string> = {
+  all: "All areas",
+  ios: "iOS app",
+  backend: "Backend",
+  web: "Marketing site",
+  launch: "Launch",
+  other: "Other",
+};
+
+function isAreaKey(value: string | null): value is AreaKey {
+  return value === "all" || value === "ios" || value === "backend" || value === "web" || value === "launch" || value === "other";
+}
+
+function matchesArea(row: QueueRowView, area: AreaKey): boolean {
+  if (area === "all") return true;
+  return row.area === area;
+}
 
 // ── Grouping helpers ─────────────────────────────────────────────────
 //
@@ -140,11 +165,36 @@ function matchesFilter(row: QueueRowView, filter: FilterKey): boolean {
 
 export default function QueueClient({ accessParam }: { accessParam: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [state, setState] = useState<FetchState>({ status: "idle" });
   const [filter, setFilter] = useState<FilterKey>("all");
+  // Initialise area from `?area=` so a teammate can be sent a pre-scoped
+  // URL. Falls back to "all" when the param is missing or unrecognised.
+  const initialArea = searchParams.get("area");
+  const [areaFilter, setAreaFilter] = useState<AreaKey>(
+    isAreaKey(initialArea) ? initialArea : "all",
+  );
   const [isRefreshing, startRefresh] = useTransition();
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+
+  // Sync the area filter back to the URL so the page is shareable. Use
+  // router.replace (not push) so the back button isn't littered with
+  // every chip tap.
+  const updateAreaFilter = useCallback(
+    (next: AreaKey) => {
+      setAreaFilter(next);
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === "all") {
+        params.delete("area");
+      } else {
+        params.set("area", next);
+      }
+      const qs = params.toString();
+      router.replace(qs ? `/queue?${qs}` : "/queue");
+    },
+    [router, searchParams],
+  );
 
   const buildUrl = useCallback(() => {
     const qs = new URLSearchParams({ limit: "all" });
@@ -233,7 +283,9 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
   );
 
   // Derive counts off the full row set so filter chips show truth, not
-  // "what's currently visible".
+  // "what's currently visible". Area counts respect the current status
+  // filter (so "iOS 14" reflects "Ready iOS tickets" when Ready is
+  // active) — that's more useful than a static area total.
   const counts = useMemo(() => {
     const result = {
       all: rows.length,
@@ -253,9 +305,29 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
     return result;
   }, [rows]);
 
+  // Area chip counts — computed against the rows that already match the
+  // status filter so the badges reflect "X iOS tickets that are also
+  // Ready" rather than "X iOS tickets in the whole queue".
+  const areaCounts = useMemo(() => {
+    const result: Record<AreaKey, number> = {
+      all: 0,
+      ios: 0,
+      backend: 0,
+      web: 0,
+      launch: 0,
+      other: 0,
+    };
+    for (const row of rows) {
+      if (!matchesFilter(row, filter)) continue;
+      result.all += 1;
+      result[row.area] = (result[row.area] || 0) + 1;
+    }
+    return result;
+  }, [rows, filter]);
+
   const filteredRows = useMemo(
-    () => rows.filter((row) => matchesFilter(row, filter)),
-    [rows, filter],
+    () => rows.filter((row) => matchesFilter(row, filter) && matchesArea(row, areaFilter)),
+    [rows, filter, areaFilter],
   );
 
   const readyRows = useMemo(() => filteredRows.filter(isReady), [filteredRows]);
@@ -263,7 +335,10 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
   const waitingRows = useMemo(() => filteredRows.filter(isWaiting), [filteredRows]);
   const backlogRows = useMemo(() => filteredRows.filter(isBacklog), [filteredRows]);
 
-  const topPick = rows.find(isReady);
+  // Top pick respects BOTH filters so the "Buddy suggests next" banner
+  // points at something inside the active scope (e.g. the highest-rank
+  // Ready iOS ticket when the URL is `?area=ios`).
+  const topPick = rows.find((row) => isReady(row) && matchesArea(row, areaFilter));
 
   function handleRefresh() {
     startRefresh(() => {
@@ -301,6 +376,7 @@ export default function QueueClient({ accessParam }: { accessParam: string }) {
           {topPick ? <TopPickBanner row={topPick} accessParam={accessParam} /> : null}
 
           <FilterChipRow filter={filter} onChange={setFilter} counts={counts} />
+          <AreaChipRow area={areaFilter} onChange={updateAreaFilter} counts={areaCounts} />
 
           <GroupSection
             title="Ready for you"
@@ -485,7 +561,11 @@ function FilterChipRow({
     { key: "high-priority", label: "Top priority" },
   ];
   return (
-    <div className="mb-8 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
+    <div
+      className="mb-3 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible"
+      role="group"
+      aria-label="Filter tickets by status"
+    >
       {chips.map(({ key, label }) => {
         const isActive = filter === key;
         const count = counts[key] ?? 0;
@@ -494,6 +574,7 @@ function FilterChipRow({
             key={key}
             type="button"
             onClick={() => onChange(key)}
+            aria-pressed={isActive}
             // min-h-[44px] keeps chips comfortably tappable on iPhone even
             // though the visual baseline is shorter; matches Apple's HIG.
             className={`inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2 text-[0.82rem] font-semibold leading-none transition-colors ${
@@ -506,6 +587,65 @@ function FilterChipRow({
             <span
               className={`rounded-full px-1.5 py-[0.1rem] text-[0.68rem] font-bold ${
                 isActive ? "bg-white/[0.22]" : "bg-white/[0.12]"
+              }`}
+            >
+              {count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Second chip row — area filter. Composes with the status chips above so
+// "Ready for you" + "iOS app" shows the ready-to-test iOS tickets only.
+// Mirrored styling so the two rows feel like a single filter strip.
+function AreaChipRow({
+  area,
+  onChange,
+  counts,
+}: {
+  area: AreaKey;
+  onChange: (next: AreaKey) => void;
+  counts: Record<AreaKey, number>;
+}) {
+  const chips: { key: AreaKey; label: string }[] = [
+    { key: "all", label: AREA_LABELS.all },
+    { key: "ios", label: AREA_LABELS.ios },
+    { key: "backend", label: AREA_LABELS.backend },
+    { key: "web", label: AREA_LABELS.web },
+    { key: "launch", label: AREA_LABELS.launch },
+    { key: "other", label: AREA_LABELS.other },
+  ];
+  return (
+    <div
+      className="mb-8 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible"
+      role="group"
+      aria-label="Filter tickets by work area"
+    >
+      {chips.map(({ key, label }) => {
+        const isActive = area === key;
+        const count = counts[key] ?? 0;
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange(key)}
+            aria-pressed={isActive}
+            // Subtle visual distinction from the status chips above: same
+            // shape + size, but the active state uses a muted accent so
+            // the eye can still read "primary filter = status".
+            className={`inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2 text-[0.82rem] font-semibold leading-none transition-colors ${
+              isActive
+                ? "border-sky-300/55 bg-sky-300/15 text-sky-100"
+                : "border-[var(--border-strong)] bg-white/[0.03] text-[var(--muted-strong)] hover:bg-white/[0.06] hover:text-white"
+            }`}
+          >
+            {label}
+            <span
+              className={`rounded-full px-1.5 py-[0.1rem] text-[0.68rem] font-bold ${
+                isActive ? "bg-sky-200/25" : "bg-white/[0.12]"
               }`}
             >
               {count}

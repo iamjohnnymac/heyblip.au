@@ -10,7 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildQueueJql, isTestable, normaliseCandidate, QUEUE_FIELDS } from "./ticket-queue.ts";
+import { buildQueueJql, classifyWorkArea, isTestable, normaliseCandidate, QUEUE_FIELDS } from "./ticket-queue.ts";
 
 function makeRawCandidate({ key = "BDEV-700", fields = {} } = {}) {
   return {
@@ -261,4 +261,26 @@ test("isTestable stays true for a Verifying ticket alongside the To Do widening"
   // criterion. Keep the existing behaviour locked in.
   const c = normaliseCandidate(makeRawCandidate());
   assert.equal(isTestable(c), true);
+});
+
+test("classifyWorkArea routes summaries by [TAG] prefix", () => {
+  assert.equal(classifyWorkArea("[AUTH] Token refresh storm", ""), "ios");
+  assert.equal(classifyWorkArea("[PUSH] Friend request push always shows Unknown", "Push/Badge"), "ios");
+  assert.equal(classifyWorkArea("[BLE] False-positive proximity alert", "Nearby/BLE"), "ios");
+  assert.equal(classifyWorkArea("[NOISE] Handshake msg2 fails decryption", "Relay/Noise"), "ios");
+  assert.equal(classifyWorkArea("[RELAY] ANNOUNCE broadcast is fully global", ""), "backend");
+  assert.equal(classifyWorkArea("[OBS] Give agents authenticated Jira attachment-read access", ""), "backend");
+  assert.equal(classifyWorkArea("[WEB] Fix SEO meta tags, GitHub link, and tech page content", ""), "web");
+  assert.equal(classifyWorkArea("[LAUNCH] Audit BLE / Local Network purpose strings", ""), "launch");
+  assert.equal(classifyWorkArea("[LEGAL] Register HeyBlip word mark in Australia", ""), "launch");
+  assert.equal(classifyWorkArea("[OPS] Set up abuse@heyblip.au email aliases", ""), "launch");
+});
+
+test("classifyWorkArea falls back to MVP Track when no [TAG] prefix is set", () => {
+  // No bracket prefix → consult the Track field.
+  assert.equal(classifyWorkArea("Friend request UX polish", "Push/Badge"), "ios");
+  assert.equal(classifyWorkArea("Update marketing site copy", "Marketing Site"), "web");
+  assert.equal(classifyWorkArea("Sentry alert tuning", "Observability"), "backend");
+  // Neither prefix nor a track match → "other" so the chip count is honest.
+  assert.equal(classifyWorkArea("Tidy README", ""), "other");
 });

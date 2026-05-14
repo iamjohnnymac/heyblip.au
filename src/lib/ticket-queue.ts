@@ -26,6 +26,64 @@ export function shortenShas(value: string): string {
   return value.replace(/\b([0-9a-f]{8,40})\b/gi, (m) => m.slice(0, 7));
 }
 
+// Work-area classification — coarse buckets so collaborators can filter
+// the queue down to their lane (iOS, Backend, Web, Launch, Other). Driven
+// by the bracketed [TAG] prefix in the summary first (because John already
+// writes those by hand), then by MVP Track as a fallback.
+//
+// The mapping is opinionated: tickets where the *primary* work lives in
+// one place. Cross-cutting tickets (e.g. AUTH that touches both iOS +
+// auth Worker) land on whichever side the bug visibly manifests, which
+// is almost always the client side. Tay can flip the filter to see
+// what's coming his way on the backend.
+export type WorkArea = "ios" | "backend" | "web" | "launch" | "other";
+
+const TAG_TO_AREA: Record<string, WorkArea> = {
+  // iOS app — anything that touches the SwiftUI app, NSE, Packages/*.
+  AUTH: "ios",
+  PUSH: "ios",
+  CHAT: "ios",
+  BLE: "ios",
+  NOISE: "ios",
+  TEST: "ios",
+  REFACTOR: "ios",
+  NEARBY: "ios",
+  UI: "ios",
+  UX: "ios",
+
+  // Backend — server/auth, server/relay, server/cdn, observability.
+  RELAY: "backend",
+  OBS: "backend",
+  LOG: "backend",
+  WORKER: "backend",
+  API: "backend",
+
+  // Web — heyblip.au marketing site.
+  WEB: "web",
+  SEO: "web",
+  MARKETING: "web",
+
+  // Launch — App Store, legal, ops, docs, reviewer-facing.
+  LAUNCH: "launch",
+  LEGAL: "launch",
+  OPS: "launch",
+  PROCESS: "launch",
+  DOCS: "launch",
+};
+
+export function classifyWorkArea(summary: string, mvpTrack: string): WorkArea {
+  const tagMatch = summary.match(/^\s*\[([A-Z0-9 /-]+)\]/);
+  if (tagMatch) {
+    const tag = tagMatch[1].toUpperCase().replace(/\s+/g, "");
+    if (TAG_TO_AREA[tag]) return TAG_TO_AREA[tag];
+  }
+  const track = (mvpTrack || "").toLowerCase();
+  if (/marketing|web|site/.test(track)) return "web";
+  if (/relay|noise|push|auth/.test(track)) return "ios";
+  if (/observ/.test(track)) return "backend";
+  return "other";
+}
+
 // Compact build/commit handle for the queue card pill. Some tickets
 // stash a long diagnostic string into Verified Build/Commit (e.g.
 // "website PR #13 head f653ccb; production dpl_3VwU8Ls4HmKpT2DWV9gm3..."
@@ -97,6 +155,9 @@ export type QueueRow = QueueCandidate & {
   hasBuild: boolean;
   hasHumanReady: boolean;
   surfaceList: string[];
+  // Coarse work-area bucket — drives the second filter chip row on the
+  // queue page so collaborators can scope to iOS / Backend / Web / Launch.
+  area: WorkArea;
 };
 
 const SKIP_STATUSES = new Set(["done", "passed", "closed", "won't do", "wont do"].map((s) => s.toLowerCase()));
@@ -438,6 +499,7 @@ export function rankCandidates({ candidates, recentlyLoadedKeys, now = Date.now(
       hasBuild,
       hasHumanReady,
       surfaceList: compactSurfaces(candidate.verificationSurface).map(describeSurface),
+      area: classifyWorkArea(candidate.summary, candidate.mvpTrack),
     });
   }
 
@@ -464,6 +526,7 @@ export function describeCandidate(candidate: QueueCandidate, now: number = Date.
     hasBuild,
     hasHumanReady,
     surfaceList: compactSurfaces(candidate.verificationSurface).map(describeSurface),
+    area: classifyWorkArea(candidate.summary, candidate.mvpTrack),
   };
 }
 
