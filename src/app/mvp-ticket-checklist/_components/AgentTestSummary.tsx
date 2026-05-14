@@ -99,9 +99,20 @@ export function AgentTestSummaryPanel({
     // children with `min-width: auto` (default for grid items) stretch
     // the panel to 2073px on a 390px viewport.
     <div className="mt-5 w-full min-w-0 border-t border-white/10 pt-5">
+      {/*
+        Section header. This panel is the AI's whole handover note:
+        the build it shipped, the plan it wants you to run on your
+        phone, what to watch in Sentry, AND a subsection further down
+        called "What the AI checked" listing its own
+        automated/simulator/worker results. The previous header
+        "What the AI tested" overlapped with that inner subsection
+        and made the body (a human test plan) look like AI test
+        output. Calling it "AI's test summary" instead matches the
+        canonical Jira comment heading ("Agent Test Update").
+      */}
       <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--accent-light)]">
         <Sparkles size={13} aria-hidden="true" />
-        What the AI tested
+        AI&apos;s test summary
       </div>
 
       {buildChip ? (
