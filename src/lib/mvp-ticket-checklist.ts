@@ -2489,6 +2489,14 @@ function buildCodingAgentPrompt(
     "- If the surface includes One Phone, Two Phones, TestFlight/APNs, BLE, or Sentry Watch, you may only say ready for John/Tay verification.",
     "- Include command names and short results. Do not paste huge logs.",
     "- If a command cannot run, say why and what weaker evidence you used.",
+    ...(/worker smoke/i.test(input.customFields.verificationSurface || "")
+      ? [
+          "",
+          "Worker Smoke surface — note for this ticket:",
+          "- If your fix requires a new Cloudflare Worker deploy (not just a smoke against an already-live endpoint), only John can run it: wrangler is authenticated only on his MacBook Pro. Your PR ends at branch-pushed + PR-opened.",
+          "- The deploy runbook (including the wrangler-auth refresh, secret-handling, and SSH-into-MBP failure modes) lives in `docs/ops/cloudflare-worker-deploys.md` in `iamjohnnymac/heyblip`. Point John there in #blip-dev if the deploy fails.",
+        ]
+      : []),
     "",
     "Current Jira description / acceptance excerpt:",
     descriptionExcerpt,
