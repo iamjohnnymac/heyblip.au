@@ -53,6 +53,25 @@ const SURFACE_CONFIGS = [
     template: ["Two Phones:", "- Phone A/account: [device + account]", "- Phone B/account: [device + account]", "- Direction: [A to B / B to A / both]", "- Expected result: [visible pass/fail on both]"],
   },
   {
+    id: "two-simulators",
+    label: "Two Simulators",
+    aliases: [/two simulators?/i, /2 simulators?/i, /paired simulators?/i, /dual sim\b/i],
+    checklistLabel: "Have we named the two-simulator E2E scenario?",
+    missingDetail:
+      "Jira requires two-simulator E2E proof, but the ticket does not name the scenario, both automation accounts, or the expected log assertions yet.",
+    tickWhen:
+      "Tick this after Jira names: (1) the scenario name passed to the Mac runner workflow, (2) which automation accounts are used (sim-a-e2e / sim-b-e2e), (3) the expected client-side log lines on each sim.",
+    template: [
+      "Two Simulators:",
+      "- Scenario: [scenario name — friend-request / dm / push-routing / smoke]",
+      "- Sim A account: sim-a-e2e (or alternate from automation pool)",
+      "- Sim B account: sim-b-e2e (or alternate from automation pool)",
+      "- Expected Sim A log line: [e.g. [PUSH] handled friend_request]",
+      "- Expected Sim B log line: [e.g. [PUSH] handled dm]",
+      "- Runner: gh workflow run two-sim-e2e.yml -f ticket=BDEV-XXX -f scenario=<name>",
+    ],
+  },
+  {
     id: "testflight-apns",
     label: "TestFlight/APNs",
     aliases: [/testflight/i, /apns/i, /push/i],
@@ -1352,8 +1371,16 @@ function buildSurfaceCards(surfaceConfigs: SurfaceConfig[]): WorkSurfaceCard[] {
     active: true,
     detail: surfaceDetail(surface.id),
     requiredBecause: `Verification Surface includes ${surface.label}`,
+    // BLE + real-phone + TestFlight surfaces genuinely need a human
+    // hand-held device. "Two Simulators" does NOT — the Mac runner
+    // covers it end-to-end via gh workflow run two-sim-e2e.yml. Keep
+    // two-simulators OFF the needsHumanDevice list so the proof
+    // authority can credit a clean two-sim run.
     needsHumanDevice: /one-phone|two-phones|testflight-apns|ble/.test(surface.id),
-    agentVerifiable: /automated|simulator|worker-smoke/.test(surface.id),
+    // Two-simulators IS agent-verifiable (the runner is a CI job, no
+    // human input needed) so the agent may claim Done when paired
+    // with Automated only.
+    agentVerifiable: /automated|simulator|worker-smoke|two-simulators/.test(surface.id),
   }));
 }
 
@@ -2757,10 +2784,23 @@ function buildCodingAgentPrompt(
     "",
     "Verification contract:",
     "- Run the exact proof recipe below, plus any directly affected existing tests.",
-    "- If the surface is Automated, Simulator, or Worker Smoke only, you may say the agent-side proof is complete after every required check passes.",
+    "- If the surface is Automated, Simulator, Worker Smoke, or Two Simulators only, you may say the agent-side proof is complete after every required check passes.",
     "- If the surface includes One Phone, Two Phones, TestFlight/APNs, BLE, or Sentry Watch, you may only say ready for John/Tay verification.",
     "- Include command names and short results. Do not paste huge logs.",
     "- If a command cannot run, say why and what weaker evidence you used.",
+    ...(/two simulators?/i.test(input.customFields.verificationSurface || "")
+      ? [
+          "",
+          "Two Simulators (Mac runner) — required for this ticket:",
+          "- Trigger the macOS self-hosted runner from your shell:",
+          `    gh workflow run two-sim-e2e.yml -f ticket=${input.issueKey} -f scenario=<scenario-name> -f ref=<branch-or-sha>`,
+          "    (replace <scenario-name> with one of: smoke / push-routing / friend-request / dm — match the named scenario for this ticket)",
+          "- Wait for the run to complete:  gh run watch <run-id>",
+          "- The runner writes its outcome back to this Jira ticket as a comment. Read that comment before posting your Agent Test Update.",
+          "- Under \"Simulator:\" / \"Two Simulators:\" in your ATU, paste: scenario name, both automation accounts used, the asserted client-side log lines, and the artifact path/URL the runner returned.",
+          "- Do NOT post \"Simulator: Not run today\" for two-simulator tickets — that's the exact gap this workflow closes. If the runner errored, paste the error + reason instead.",
+        ]
+      : []),
     "",
     "Current Jira description / acceptance excerpt:",
     descriptionExcerpt,
