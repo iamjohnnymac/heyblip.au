@@ -392,10 +392,29 @@ async function runCron(request: Request): Promise<NextResponse<RunResponse>> {
     await recordTokenSpend(tokensSpent, startedAt);
   }
 
-  // Advance cursor to the newest issue's lastSeen so the next run only
-  // sees later-arriving issues.
-  if (issues[0]?.lastSeen) {
-    await writeSentryCursor(issues[0].lastSeen);
+  // Advance cursor to the MAX firstSeen across the returned batch.
+  //
+  // The fetch query uses `is:unresolved firstSeen:>${cursor}` (see
+  // fetchSentryIssues), so the cursor MUST be tracked in firstSeen
+  // units. Using `issues[0].lastSeen` was a bug — Sentry sorts issues
+  // by lastSeen DESC by default, so `issues[0]` is "most recently seen"
+  // but its `firstSeen` can be older than other issues' `firstSeen` in
+  // the same batch. Advancing the cursor to that lastSeen would then
+  // skip any issue whose firstSeen is BETWEEN the previous cursor and
+  // the chosen lastSeen — forever, because the query filter wouldn't
+  // match them on the next run either. (Review finding by John,
+  // 2026-05-15.)
+  //
+  // Taking the max firstSeen across the batch ensures every issue in
+  // this batch was strictly newer than the previous cursor, and the
+  // next run only sees issues with firstSeen strictly greater than the
+  // newest one we just processed. No skipping.
+  const maxFirstSeen = issues.reduce<string | null>((max, issue) => {
+    if (!issue.firstSeen) return max;
+    return max === null || issue.firstSeen > max ? issue.firstSeen : max;
+  }, null);
+  if (maxFirstSeen) {
+    await writeSentryCursor(maxFirstSeen);
   }
 
   await appendAuditLog(audit);

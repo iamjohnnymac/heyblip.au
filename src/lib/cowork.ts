@@ -57,7 +57,12 @@ export function readCoworkConfig(): CoworkConfig {
     sentryProject: process.env.SENTRY_PROJECT || "apple-ios",
     sentryAuthToken: process.env.SENTRY_AUTH_TOKEN || null,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || process.env.OPENROUTER_API_KEY || null,
-    cronSecret: process.env.COWORK_CRON_SECRET || null,
+    // Vercel's documented cron-auth env var is `CRON_SECRET` (sent as
+    // `Authorization: Bearer ${CRON_SECRET}`); we accept the older
+    // `COWORK_CRON_SECRET` as a fallback so existing operator setups
+    // don't silently break. Set whichever — if both are set, CRON_SECRET
+    // wins. See review by John, 2026-05-15.
+    cronSecret: process.env.CRON_SECRET || process.env.COWORK_CRON_SECRET || null,
   };
 }
 

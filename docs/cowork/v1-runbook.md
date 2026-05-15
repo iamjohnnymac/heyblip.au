@@ -27,7 +27,7 @@ Set these in Vercel project settings. Production and Preview should generally ma
 | `COWORK_MAX_TICKETS_PER_HOUR` | `3` | Hard rate limit per UTC hour. |
 | `COWORK_MAX_TICKETS_PER_DAY` | `15` | Hard rate limit per UTC day. |
 | `COWORK_MAX_ANTHROPIC_TOKENS_PER_DAY` | `1000000` | Token-spend cap per UTC day. |
-| `COWORK_CRON_SECRET` | unset | Optional bearer token for Vercel cron requests. Set the same value in `vercel.json` cron config (Vercel injects it automatically). |
+| `CRON_SECRET` | unset | **Vercel's documented cron-auth env var.** Vercel injects it into cron requests as `Authorization: Bearer ${CRON_SECRET}` — no `vercel.json` change needed. The route also accepts the legacy `COWORK_CRON_SECRET` name as a fallback if you've already configured that. |
 | `COWORK_ANTHROPIC_MODEL` | `claude-haiku-4-5` | Used when calling Anthropic directly. |
 | `COWORK_OPENROUTER_MODEL` | `anthropic/claude-haiku-4.5` | Used when calling via OpenRouter. |
 | `SENTRY_AUTH_TOKEN` | (required) | Sentry personal/integration auth token with `event:read` and `project:read` on the `apple-ios` project. |
